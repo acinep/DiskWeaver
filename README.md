@@ -83,10 +83,20 @@ The two frontends (Cockpit plugin + standalone SPA) build together:
 cd src/DiskWeaver.Cockpit && npm ci && npm run build
 ```
 
+## Developing
+
+`DiskWeaver.Core` and the frontends build and test on any OS with the
+.NET 10 SDK and Node. Everything that shells out to `mdadm`/LVM2/PAM
+(the daemon, real executor runs) needs a Linux environment — see
+[`CONTRIBUTING.md`](CONTRIBUTING.md) for the Linux and Windows (WSL2)
+setup paths.
+
 ## Running it
 
-- **Local iteration** (WSL2 + real `mdadm`/LVM2/PAM, no packaging step):
-  see [`scripts/wsl-dev/README.md`](scripts/wsl-dev/README.md).
+- **Local iteration** (real `mdadm`/LVM2/PAM, no packaging step): see
+  [`CONTRIBUTING.md`](CONTRIBUTING.md) — native Linux, or WSL2 via
+  [`scripts/wsl-dev/README.md`](scripts/wsl-dev/README.md) if you're on
+  Windows.
 - **Real install** (a `.deb`, systemd unit, PAM service, both frontends):
   see [`docs/deployment.md`](docs/deployment.md).
 - **Manual loop-device validation** (no daemon, just the CLI + real
@@ -95,6 +105,7 @@ cd src/DiskWeaver.Cockpit && npm ci && npm run build
 
 ## Docs
 
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — dev environment setup, Linux and Windows/WSL2.
 - [`docs/PRD.md`](docs/PRD.md) — product rationale, why HHR-style pooling.
 - [`docs/algorithm.md`](docs/algorithm.md) — tiering/pooling math.
 - [`docs/execution.md`](docs/execution.md) — plan → commands, journaling, crash recovery.
