@@ -10,6 +10,49 @@ See [`docs/PRD.md`](docs/PRD.md) for the full product rationale and
 [`docs/algorithm.md`](docs/algorithm.md) for how the tiering/pooling math
 actually works.
 
+## Why DiskWeaver?
+
+Real storage collections are messy — drives retired from a primary NAS,
+replaced with larger ones, accumulated over years. The result is a drawer
+full of mixed capacities that no standard RAID implementation handles
+gracefully. Existing options all fall short in different ways:
+
+| Solution | Mixed sizes | True RAID | Open & recoverable | Platform |
+|---|---|---|---|---|
+| mdadm / ZFS | ❌ | ✅ | ✅ | Any Linux |
+| SnapRAID | ✅ | ❌ | ✅ | Any Linux |
+| UnRAID | ✅ | ❌ | ✅ | Proprietary OS |
+| Drobo BeyondRAID | ✅ | ✅ | ❌ | Abandoned hardware |
+| Synology SHR | ✅ | ✅ | ❌ | Proprietary hardware |
+| **DiskWeaver** | ✅ | ✅ | ✅ | Any Linux |
+
+SnapRAID and UnRAID solve the mixed-size problem but at the cost of real
+RAID semantics — both are fundamentally parity backup systems, where data
+lives on individual drives and parity is used for reconstruction after
+failure. A drive failure means that drive's data is gone until you
+rebuild, and performance under concurrent access reflects single-drive
+speeds, not an array.
+
+Drobo's BeyondRAID got closest to the right answer — genuine redundancy
+across mixed drive sizes — and then Drobo collapsed, leaving users with
+proprietary hardware, a proprietary on-disk format, and a recovery story
+that requires expensive specialist software. It's the best argument for
+why "trust us, it works" is not a storage strategy.
+
+Synology's SHR is excellent, and genuinely the inspiration for
+DiskWeaver's approach — but it requires Synology hardware, so you can't
+run it on a server you already own, and you can't migrate away from it
+without rebuilding from scratch.
+
+DiskWeaver does what SHR does, on any Linux system, using standard
+`mdadm` and LVM2 under the hood. There's no proprietary on-disk format
+and no special recovery tools required — if DiskWeaver disappeared
+tomorrow, your pool is still a set of standard mdadm arrays on LVM
+volumes that any Linux administrator can work with using tools that ship
+with every distribution. The answer to "what happens if DiskWeaver goes
+away?" is boring: nothing. Your data is fine, and your tools already
+know how to read it.
+
 ## Repository layout
 
 All buildable projects live under `src/`; `docs/`, `scripts/`, `packaging/`,

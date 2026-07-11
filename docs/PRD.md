@@ -1,6 +1,6 @@
 # DiskWeaver — Product Requirements Document
 
-Status: Draft v0.1
+Status: v1 substantially built and validated (see gaps noted inline below)
 Owner: Noel Phillips
 
 ## 1. Summary
@@ -21,9 +21,12 @@ DiskWeaver is a native-AOT compiled C#/.NET application composed of:
   tools (`sfdisk`/`parted`), journaling progress so a crash mid-execution
   is recoverable.
 - A **daemon** (root, systemd-managed) that owns all disk state and exposes
-  the planner/executor over a local Unix socket API.
-- A **Cockpit plugin** (thin HTML/JS client) and a **CLI** as two interfaces
-  to the same daemon API.
+  the planner/executor over HTTP — a Unix socket for Cockpit, and an
+  opt-in PAM-authenticated TCP listener for the standalone SPA.
+- A **Cockpit plugin** and a **standalone SPA** (two React/PatternFly
+  frontends built from one shared component tree, differing only in how
+  they reach the daemon), plus a **CLI**, as interfaces to the planner/
+  executor.
 
 ## 2. Background: how HHR works
 
@@ -55,8 +58,10 @@ This is the behavior DiskWeaver reimplements on stock Linux using
 - Detect and guide recovery from a degraded/failed disk.
 - Present a clear, reviewable plan before any destructive/risky operation,
   and execute it safely with resumable state.
-- Ship as a Cockpit plugin so it's usable from a browser on a headless
-  NAS-like box, plus a CLI for scripting/headless use.
+- Ship as a Cockpit plugin (for boxes already running Cockpit) and a
+  standalone SPA (for boxes that aren't), so it's usable from a browser
+  on a headless NAS-like box either way, plus a CLI for scripting/
+  headless use.
 - Be distributable as a single native-AOT binary (daemon) with minimal
   runtime dependencies beyond mdadm/lvm2/util-linux.
 
@@ -71,59 +76,18 @@ This is the behavior DiskWeaver reimplements on stock Linux using
 - Network/remote storage (iSCSI targets, distributed pools).
 - Migrating an *existing*, non-DiskWeaver-managed mdadm/LVM layout into
   management automatically (may be a stretch goal — see §9).
-- A GUI beyond the Cockpit plugin (no separate Electron/desktop app).
+- A GUI beyond the Cockpit plugin and standalone SPA (no separate
+  Electron/desktop app).
 - Multi-node / clustering support.
 
-## 4a. Phased delivery
-
-- **Phase 1 (current focus): Planner only.** Given an inventory of disks
-  (real or fixture/mocked) and a requested intent (create pool, add
-  disk, replace disk), produce a correct, serializable `Plan` — no
-  execution, no daemon, no Cockpit plugin, no root privileges required.
-  This is where the HHR tiering algorithm gets built and tested in
-  isolation, with unit tests driven by disk-size fixtures rather than
-  real hardware. Ships as a library + CLI command that prints/dumps a
-  Plan (e.g. as JSON) for inspection.
-- **Phase 2: Executor.** Take an approved `PoolPlan` and turn it into the
-  actual `mdadm`/partitioning/LVM2 commands needed to build it — split
-  into two sub-phases using the same pure-transform / OS-specific-backend
-  split that Phase 1's inventory sourcing used (`LsblkOutputParser` vs
-  `LsblkDiskInventorySource`):
-  - **2a — Command generation + script emission (current focus).** A
-    pure, platform-independent step that turns a `PoolPlan` into an
-    ordered list of `ExecutionStep`s (partition, mdadm create, pvcreate,
-    vgcreate, lvcreate) and renders them as a reviewable shell script.
-    No root privileges, no real disk access, fully testable on Windows —
-    same reasoning as why the lsblk *parser* could be built and tested
-    off-target while the lsblk *process invocation* couldn't.
-  - **2b — Invocation + journal.** Actually run those steps as
-    subprocesses against real disks, with the journaled, resumable
-    execution described in §6/§8.5 (plan-hash validation, per-step
-    journal persistence, crash recovery). Linux-only at runtime, needs
-    root, needs real hardware (or a Linux VM) to validate.
-- **Phase 3: Daemon + transport.** Wrap planner+executor in the
-  long-running root `diskweaverd` service exposed over a Unix socket.
-  Built: `DiskWeaver.Daemon` (Kestrel, Native AOT, Unix socket via
-  `DISKWEAVER_SOCKET`) — see daemon-api.md for the full endpoint list,
-  including pool expansion (`POST /pools/{poolName}/expand`) and
-  teardown (`POST /pools/{poolName}/teardown`) driven by real on-disk
-  state, not just fresh-build plans.
-- **Phase 4: Cockpit plugin.** Thin HTML/JS client on top of the
-  daemon API. Built and validated against a real Cockpit instance (see
-  cockpit-plugin.md): create/expand/teardown a pool, view
-  build/teardown scripts, and watch the execution journal, all through
-  the browser, confirmed end-to-end against real `mdadm`/LVM state.
-  **Not yet done**: the CLI is still a direct client of the planner
-  library (not yet repointed to call the daemon over the socket) — it
-  and the Cockpit plugin currently don't share a backend, contrary to
-  this phase's original intent.
-
-Sections below describe the eventual full architecture; only §7 and the
-planning-related parts of §8 are in scope for Phase 1. Phases 2-4 are
-now built and validated (see execution.md, daemon-api.md,
-cockpit-plugin.md for what's actually true today, since those docs are
-kept current turn-by-turn while this PRD stays at the plan/intent
-level).
+DiskWeaver is now built and validated end-to-end: planner, executor,
+daemon (`diskweaverd`, Native AOT, Unix socket + PAM-authenticated TCP),
+Cockpit plugin, standalone SPA, and CLI. See execution.md, daemon-api.md,
+and cockpit-plugin.md for what's actually true today, since those docs
+are kept current turn-by-turn while this PRD stays at the rationale/
+intent level. Known gaps against that end state are called out inline
+in §8 below (the CLI not yet talking to the daemon, the disk-replacement
+flow, health/degraded-pool monitoring).
 
 ## 5. Users & use cases
 
@@ -147,13 +111,13 @@ Key use cases:
 ## 6. Architecture
 
 ```
-┌─────────────────────┐      ┌──────────────────────┐
-│   Cockpit plugin     │      │   diskweaver CLI      │
-│   (HTML/JS, thin)    │      │   (native-AOT exe)    │
-└──────────┬───────────┘      └──────────┬────────────┘
-           │ cockpit http-stream1 bridge  │
-           │            (unix socket, JSON-RPC/HTTP)     │
-           └───────────────┬──────────────┘
+┌─────────────────────┐  ┌─────────────────────┐  ┌──────────────────────┐
+│   Cockpit plugin     │  │   Standalone SPA     │  │   diskweaver CLI      │
+│   (React/PatternFly) │  │   (React/PatternFly) │  │   (native-AOT exe)    │
+└──────────┬───────────┘  └──────────┬───────────┘  └──────────┬────────────┘
+           │ cockpit.http()          │ PAM-auth TCP             │
+           │ (unix socket)           │ (HTTP+JSON)              │
+           └───────────────┬─────────┴──────────────────────────┘
                             ▼
                  ┌─────────────────────┐
                  │  diskweaverd (root)  │
@@ -186,13 +150,15 @@ Key design decisions (confirmed for v1):
   operates.
 - **Daemon + transport**: a single long-running root daemon
   (`diskweaverd`) is the only process that touches disks. It exposes an
-  HTTP+JSON API over a Unix domain socket (settled — see daemon-api.md's
+  HTTP+JSON API over both a Unix domain socket and an opt-in
+  PAM-authenticated TCP listener (settled — see daemon-api.md's
   "Transport decision"). The Cockpit plugin talks to it via Cockpit's
-  `cockpit.http()`; the CLI is intended to talk to it directly over the
-  same socket, though that repointing hasn't happened yet (see §4a).
-  Chosen over "Cockpit spawns CLI per action" so multi-step, long-running
+  `cockpit.http()` over the Unix socket; the standalone SPA talks to it
+  directly over the TCP listener. The CLI is intended to talk to it too,
+  though that repointing hasn't happened yet (see §8.6). Chosen over
+  "each frontend spawns CLI per action" so multi-step, long-running
   operations (rebuilds, growth) have a persistent process to track
-  progress/state and so the CLI and Cockpit UI share identical behavior.
+  progress/state and so all frontends share identical behavior.
 - **Safety model**: every mutating request is a two-phase
   `Plan` → `Execute` call. `Plan` is pure/read-only and returns a
   serializable `Plan` object (ordered list of steps, each with the exact
@@ -280,17 +246,20 @@ Key design decisions (confirmed for v1):
 
 ### 8.6 Interfaces
 - CLI: still a direct client of the planner library (`DiskWeaver.Cli`),
-  not yet repointed to the daemon — see §4a. Current commands:
+  not yet repointed to the daemon. Current commands:
   `diskweaver inventory`, `diskweaver plan --disks ... --redundancy dwr1
   --script ... --teardown-script ...`, `diskweaver testkit`.
-- Cockpit plugin: built (see cockpit-plugin.md) — disk picker with
-  create/expand target selection, capacity preview (achieved vs. full
-  end-state), script preview, execution journal view, per-pool
-  teardown. Health/degraded-pool dashboard not yet built (§8.4 not
-  started).
-- The Cockpit plugin is a pure client of the daemon's socket API; the
-  CLI is not yet, so CLI and Cockpit UI can currently drift in behavior
-  contrary to this section's original intent (see §4a).
+- Cockpit plugin and standalone SPA: built (see cockpit-plugin.md) — two
+  React/PatternFly frontends sharing one component tree, differing only
+  in how they reach the daemon (Cockpit's `cockpit.http()` over the Unix
+  socket vs. the SPA's direct, PAM-authenticated HTTP client over TCP).
+  Both offer: disk picker with create/expand target selection, capacity
+  preview (achieved vs. full end-state), script preview, execution
+  journal view, per-pool teardown. Health/degraded-pool dashboard not
+  yet built (§8.4 not started).
+- The Cockpit plugin and standalone SPA are both pure clients of the
+  daemon's HTTP API; the CLI is not yet, so the CLI can currently drift
+  in behavior from the two web frontends.
 
 ## 9. Open questions / stretch goals
 
