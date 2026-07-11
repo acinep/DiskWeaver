@@ -3,22 +3,27 @@ name: build
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
   workflow_dispatch:
 
 jobs:
   build-test-package:
     runs-on: ubuntu-latest
+    # contents: write is only actually needed for the release step below (tag pushes) --
+    # left at job level rather than per-step since GITHUB_TOKEN permissions aren't step-scoped.
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: "10.0.x"
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
-          node-version: "20"
+          node-version: "22"
           cache: npm
           cache-dependency-path: src/DiskWeaver.Cockpit/package-lock.json
 
@@ -42,10 +47,31 @@ jobs:
       - name: Verify daemon publishes under NativeAOT
         run: dotnet publish src/DiskWeaver.Daemon -c Release -r linux-x64 --self-contained -o /tmp/diskweaver-aot-check
 
-      - name: Build .deb package
-        run: scripts/build-deb.sh "0.0.0-ci.${{ github.run_number }}"
+      # Real version on a tag push (refs/tags/v0.1.0 -> 0.1.0); every other trigger (a plain
+      # push to main, a PR, workflow_dispatch) gets a throwaway version tied to the run number --
+      # never meant to be installed anywhere, just proves the package still builds.
+      - name: Determine package version
+        id: version
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=0.0.0-ci.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+          fi
 
-      - uses: actions/upload-artifact@v4
+      - name: Build .deb package
+        run: scripts/build-deb.sh "${{ steps.version.outputs.value }}"
+
+      - uses: actions/upload-artifact@v7
         with:
           name: diskweaver-deb
           path: dist/*.deb
+
+      # Only tag pushes (e.g. `git tag v0.1.0 && git push --tags`) get a real, permanent,
+      # publicly-downloadable release -- the artifact above expires (90 days) and needs GitHub
+      # repo access to fetch; this doesn't.
+      - name: Create GitHub Release
+        if: github.ref_type == 'tag'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create "${{ github.ref_name }}" dist/*.deb --title "${{ github.ref_name }}" --generate-notes

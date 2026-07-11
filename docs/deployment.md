@@ -29,6 +29,22 @@ runtime deps: `mdadm`, `lvm2`, `parted`, `util-linux`, `e2fsprogs`, plus
 `cockpit-bridge` for the UI. All of these are declared in
 `packaging/deb/control` and pulled in automatically by `apt install`.
 
+### Getting a pre-built package instead
+
+`.github/workflows/build.yml` builds this same package on every push, but
+that's just a CI artifact -- expires after 90 days, needs GitHub repo
+access to download, and is versioned off the CI run number, not a real
+release. Push a `v*` tag instead to get a permanent, publicly-downloadable
+`.deb` attached to a GitHub Release:
+
+```bash
+git tag v0.1.0
+git push --tags
+```
+
+The workflow derives the package version directly from the tag name
+(`v0.1.0` -> `0.1.0`).
+
 ## What the package lays down
 
 Same layout `scripts/wsl-dev/setup-wsl.sh` builds by hand for the dev loop,
