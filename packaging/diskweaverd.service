@@ -1,0 +1,34 @@
+[Unit]
+Description=DiskWeaver storage pooling daemon
+After=local-fs.target
+
+[Service]
+Type=simple
+User=root
+# Group+UMask (not User) control the Unix socket's on-disk permissions: Kestrel's
+# ListenUnixSocket() does a plain bind(), which picks up whatever the process's
+# umask/gid are at that moment. The daemon still needs to run as root for
+# mdadm/lvm2/parted, but this makes the socket group-owned and group-readable/
+# writable (0660) so any member of the "diskweaver" group -- e.g. the user
+# cockpit-bridge runs as for a logged-in Cockpit session -- can connect without
+# the socket being world-writable. See docs/cockpit-plugin.md's socket
+# permissions note; the group must exist and the Cockpit user must be a member
+# of it (scripts/wsl-dev/setup-wsl.sh does both for the WSL dev setup).
+Group=diskweaver
+UMask=0007
+WorkingDirectory=/usr/lib/diskweaver
+ExecStart=/usr/lib/diskweaver/DiskWeaver.Daemon
+Restart=on-failure
+# Loaded first (the "-" means "fine if missing") so admin-editable opt-in settings there --
+# DISKWEAVER_HTTP_PORT/_BIND/_WEBROOT, for the standalone SPA -- can never override the two
+# fixed vars below that Cockpit's own integration depends on; later directives win ties, and
+# these come after. See /etc/default/diskweaverd (packaging/default/diskweaverd) and
+# docs/deployment.md for what's actually configurable there.
+EnvironmentFile=-/etc/default/diskweaverd
+Environment=DISKWEAVER_SOCKET=/run/diskweaverd.sock
+Environment=DISKWEAVER_JOURNAL_DIR=/var/lib/diskweaver/journal
+RuntimeDirectory=diskweaverd
+StateDirectory=diskweaver
+
+[Install]
+WantedBy=multi-user.target

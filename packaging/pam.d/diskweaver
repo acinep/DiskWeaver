@@ -1,0 +1,7 @@
+#%PAM-1.0
+#
+# Installed to /etc/pam.d/diskweaver. Only auth+account, matching /etc/pam.d/sudo minus its
+# session lines -- PamAuthenticator only ever calls pam_authenticate/pam_acct_mgmt, never
+# pam_open_session, so there's no session to configure here.
+@include common-auth
+@include common-account

@@ -1,0 +1,49 @@
+/* .pf-v6-c-page is a CSS grid ("header"/"main" areas). Its "main" grid item,
+   .pf-v6-c-page__main-container, is display:flex with no min-width set, so as
+   a grid item it defaults to min-width:auto -- sized to fit its content's
+   min-content width rather than the 1fr track. Wide table content (long disk
+   IDs, tier summaries) blew that past the viewport, widening the whole page
+   grid and pushing everything right. Same story one level down for the flex
+   child .pf-v6-c-page__main (a flex item defaults to min-width:auto too).
+   Forcing both to 0 lets the 1fr track win and .pf-v6-c-page__main's existing
+   overflow:auto scroll internally instead. */
+.pf-v6-c-page__main-container,
+.pf-v6-c-page__main {
+    min-width: 0;
+}
+
+/* Belt-and-suspenders alongside the grid fix above: scope the horizontal
+   overflow to just the table itself rather than letting a wide table push
+   on any ancestor's width at all. */
+.table-scroll {
+    overflow-x: auto;
+}
+
+/* PoolDiagram.jsx's per-tier fills -- one categorical color per tier (identity, not redundancy
+   level, since two tiers at the same DWR level would otherwise render identically) plus the
+   free-space hatch. Not part of PatternFly's token set, so scoped to the app's actual dark-mode
+   signal instead (theme.js toggles this class itself; see its own comment for why
+   prefers-color-scheme alone isn't enough here). Fixed slot order (never cycled/reassigned) --
+   a validated 8-hue categorical set, worst adjacent CVD deltaE 24.2. */
+:root {
+    --dw-tier-1: #2a78d6;
+    --dw-tier-2: #1baf7a;
+    --dw-tier-3: #eda100;
+    --dw-tier-4: #008300;
+    --dw-tier-5: #4a3aa7;
+    --dw-tier-6: #e34948;
+    --dw-tier-7: #e87ba4;
+    --dw-tier-8: #eb6834;
+    --dw-diagram-free: #c3c2b7;
+}
+.pf-v6-theme-dark {
+    --dw-tier-1: #3987e5;
+    --dw-tier-2: #199e70;
+    --dw-tier-3: #c98500;
+    --dw-tier-4: #008300;
+    --dw-tier-5: #9085e9;
+    --dw-tier-6: #e66767;
+    --dw-tier-7: #d55181;
+    --dw-tier-8: #d95926;
+    --dw-diagram-free: #55544f;
+}

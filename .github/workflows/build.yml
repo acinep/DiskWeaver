@@ -1,0 +1,51 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-test-package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: src/DiskWeaver.Cockpit/package-lock.json
+
+      # clang+zlib1g-dev are ILCompiler's native toolchain for the AOT publish step below --
+      # mirrors scripts/wsl-dev/setup-wsl.sh's own dependency list for the same reason.
+      - name: Install native AOT build dependencies
+        run: sudo apt-get update && sudo apt-get install -y clang zlib1g-dev
+
+      - name: Restore and test .NET solution
+        run: dotnet test src/DiskWeaver.slnx -c Release
+
+      - name: Build Cockpit plugin + standalone SPA
+        working-directory: src/DiskWeaver.Cockpit
+        run: |
+          npm ci
+          npm run build
+
+      # Not just an optimization check -- PublishAot has already caught real bugs at publish
+      # time that `dotnet test` alone didn't (see PamAuthenticator's history): NativeAOT can't
+      # use Marshal.GetFunctionPointerForDelegate-style reflection that ordinary JIT tolerates.
+      - name: Verify daemon publishes under NativeAOT
+        run: dotnet publish src/DiskWeaver.Daemon -c Release -r linux-x64 --self-contained -o /tmp/diskweaver-aot-check
+
+      - name: Build .deb package
+        run: scripts/build-deb.sh "0.0.0-ci.${{ github.run_number }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: diskweaver-deb
+          path: dist/*.deb

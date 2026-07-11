@@ -1,0 +1,12 @@
+{
+    "name": "diskweaver",
+    "requires": {
+        "cockpit": "265"
+    },
+    "menu": {
+        "index": {
+            "label": "DiskWeaver",
+            "order": 50
+        }
+    }
+}

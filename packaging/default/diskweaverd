@@ -1,0 +1,21 @@
+# Admin-editable settings for diskweaverd -- see /lib/systemd/system/diskweaverd.service's
+# EnvironmentFile= line. Uncomment what you want, then:
+#
+#   sudo systemctl restart diskweaverd
+#
+# Cockpit integration (the Unix socket, packaging/diskweaverd.service's fixed Environment=
+# lines) needs none of this and is unaffected either way.
+
+# Uncomment to also serve the standalone SPA (a full DiskWeaver UI at this URL, no Cockpit
+# required) alongside Cockpit's existing Unix socket -- both can be on at once.
+#DISKWEAVER_HTTP_PORT=8080
+
+# Loopback-only by default once DISKWEAVER_HTTP_PORT is set above -- safe even on a shared
+# network, since nothing outside this machine can reach it. Only change this if you know you
+# want the SPA reachable from other hosts (e.g. a reverse proxy on the same box terminating
+# TLS, or you're on a network you trust); the daemon itself never speaks TLS.
+#DISKWEAVER_HTTP_BIND=127.0.0.1
+
+# Where the standalone SPA's static files live -- this is where the .deb installs them, no
+# reason to change it unless you've replaced them yourself.
+#DISKWEAVER_WEBROOT=/usr/share/diskweaver/webui

@@ -1,0 +1,17 @@
+<Solution>
+  <Folder Name="/docs/">
+    <File Path="../docs/algorithm.md" />
+    <File Path="../docs/conventions.md" />
+    <File Path="../docs/daemon-api.md" />
+    <File Path="../docs/execution.md" />
+    <File Path="../docs/PRD.md" />
+    <File Path="../docs/state-model.md" />
+    <File Path="../docs/testing.md" />
+  </Folder>
+  <Project Path="DiskWeaver.Cli.Tests/DiskWeaver.Cli.Tests.csproj" />
+  <Project Path="DiskWeaver.Cli/DiskWeaver.Cli.csproj" />
+  <Project Path="DiskWeaver.Core.Tests/DiskWeaver.Core.Tests.csproj" />
+  <Project Path="DiskWeaver.Core/DiskWeaver.Core.csproj" />
+  <Project Path="DiskWeaver.Daemon.Tests/DiskWeaver.Daemon.Tests.csproj" />
+  <Project Path="DiskWeaver.Daemon/DiskWeaver.Daemon.csproj" />
+</Solution>

@@ -1,0 +1,12 @@
+Package: diskweaver
+Version: @VERSION@
+Section: admin
+Priority: optional
+Architecture: amd64
+Maintainer: DiskWeaver Project <noel.phillips@gmail.com>
+Depends: mdadm, lvm2, parted, util-linux, e2fsprogs, cockpit-bridge
+Description: Storage pooling daemon and Cockpit plugin
+ DiskWeaver builds and manages redundant storage pools (mdadm/LVM) from
+ arbitrary disks, exposed over a Unix-socket HTTP API and a Cockpit web UI.
+ This package installs the diskweaverd daemon (systemd service) and the
+ DiskWeaver Cockpit plugin.

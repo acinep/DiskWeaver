@@ -1,0 +1,17 @@
+#!/bin/sh
+# postinst: only runs the "configure" step (fresh install or upgrade) --
+# see Debian policy 6.5. Mirrors what scripts/setup-wsl.sh does by hand for
+# the dev loop: create the socket-owning group, then (re)start the service
+# so both fresh installs and upgrades end up running the newly-unpacked
+# binary.
+set -e
+
+if [ "$1" = "configure" ]; then
+    groupadd -f diskweaver
+
+    systemctl daemon-reload
+    systemctl enable diskweaverd.service
+    systemctl restart diskweaverd.service
+fi
+
+exit 0

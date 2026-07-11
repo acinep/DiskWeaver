@@ -1,0 +1,32 @@
+# .NET
+bin/
+obj/
+*.user
+
+# Visual Studio
+.vs/
+
+# Node / esbuild
+node_modules/
+# Built bundles -- generated from src/DiskWeaver.Cockpit/src by `npm run build`, not source.
+# CI and the packaging script (scripts/build-deb.sh) rebuild these; the WSL dev loop
+# (scripts/wsl-dev/) expects them to already exist locally from your own `npm run build`.
+src/DiskWeaver.Cockpit/dist/
+src/DiskWeaver.Cockpit/standalone/dist/
+
+# scripts/build-deb.sh output
+/dist/
+*.deb
+
+# diskweaver CLI output a dev may generate while testing locally (see docs/testing.md's
+# manual loop-device walkthrough) -- never meant to be committed.
+setup-loop-devices.sh
+build-pool.sh
+teardown.sh
+wipe.sh
+inventory.json
+*.img
+
+# Claude Code session/local state -- not project source.
+.claude/
+

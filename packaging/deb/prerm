@@ -1,0 +1,12 @@
+#!/bin/sh
+# prerm: stop the service before an actual removal. Not run for upgrades
+# (dpkg replaces the files in place and postinst's `restart` picks up the
+# new binary) -- see Debian policy 6.5.
+set -e
+
+if [ "$1" = "remove" ]; then
+    systemctl stop diskweaverd.service || true
+    systemctl disable diskweaverd.service || true
+fi
+
+exit 0
