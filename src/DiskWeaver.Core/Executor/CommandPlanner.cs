@@ -57,6 +57,8 @@ public static class CommandPlanner
                 $"Create logical volume {volumeName} using all pool space",
                 "lvcreate",
                 ["-l", "100%FREE", "-n", volumeName, poolName]));
+
+            AppendMdadmConfPersistSteps(steps, arrayDevices);
         }
 
         return new ExecutionPlan(steps);
@@ -137,6 +139,8 @@ public static class CommandPlanner
                 [current.PoolName, ..newArrayDevices]));
 
             AppendUnprotectedTagSteps(steps, newUnprotectedArrayDevices);
+
+            AppendMdadmConfPersistSteps(steps, newArrayDevices);
         }
 
         if (newArrayDevices.Count > 0 || grewAnyTierInPlace)
@@ -802,6 +806,28 @@ public static class CommandPlanner
                 "pvchange",
                 ["--addtag", "diskweaver-unprotected", arrayDevice]));
         }
+    }
+
+    /// <summary>
+    /// Appends the newly-created array(s) to /etc/mdadm/mdadm.conf and rebuilds the initramfs, so the
+    /// kernel/udev can auto-assemble them at boot instead of racing incremental assembly with no
+    /// config to guide it -- confirmed live to otherwise leave an array stuck "inactive" after a
+    /// reboot until a member happens to enumerate late, with mdadm refusing to auto-start what then
+    /// looks like a dirty degraded array. Array device paths are passed as `sh -c` positional
+    /// parameters ($@), not interpolated into the script text -- they're derived from the caller-
+    /// supplied pool name, so string-building the script itself would be a command injection hole.
+    /// </summary>
+    private static void AppendMdadmConfPersistSteps(List<ExecutionStep> steps, IReadOnlyList<string> arrayDevices)
+    {
+        steps.Add(new ExecutionStep(
+            "Persist new array(s) in mdadm.conf so they auto-assemble at boot",
+            "sh",
+            ["-c", "mdadm --detail --scan \"$@\" >> /etc/mdadm/mdadm.conf", "sh", ..arrayDevices]));
+
+        steps.Add(new ExecutionStep(
+            "Rebuild the initramfs so early boot can see mdadm.conf's new entries",
+            "update-initramfs",
+            ["-u"]));
     }
 
     private static void AppendReservedNotice(List<ExecutionStep> steps, PoolPlan plan)

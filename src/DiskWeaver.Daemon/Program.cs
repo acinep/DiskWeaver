@@ -310,6 +310,11 @@ app.MapPost("/pools/{poolName}/teardown", (string poolName, IPoolStateSource poo
         return Results.NotFound();
     }
 
+    if (pool.Error is not null)
+    {
+        return TextError(StatusCodes.Status409Conflict, pool.Error);
+    }
+
     var executionPlan = CommandPlanner.BuildTeardownFromExisting(pool);
     // Folds in a content fingerprint of the pool's actual tiers (same one /expand uses) into the
     // execution id purely so a pool torn down and later rebuilt under the same name gets its own,
@@ -339,6 +344,11 @@ app.MapPost("/pools/{poolName}/expand", (string poolName, ExpansionRequest reque
     if (pool is null)
     {
         return Results.NotFound();
+    }
+
+    if (pool.Error is not null)
+    {
+        return TextError(StatusCodes.Status409Conflict, pool.Error);
     }
 
     var modesRequested = new[] { request.TargetProtection is not null, request.Redundancy is not null, request.TargetArrayDevice is not null }.Count(b => b);

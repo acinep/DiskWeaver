@@ -1,7 +1,10 @@
 import React, { useState } from "react";
-import { Label, Tooltip } from "@patternfly/react-core";
+import { Label, Progress, ProgressSize, Tooltip } from "@patternfly/react-core";
 import { ExclamationTriangleIcon } from "@patternfly/react-icons";
-import { formatBytes, RAID_LEVEL_LABELS, REDUNDANCY_LEVEL_LABELS, tierRedundancyLevel } from "../format.js";
+import {
+    formatBytes, formatSyncEta, formatSyncSpeed, RAID_LEVEL_LABELS,
+    REDUNDANCY_LEVEL_LABELS, SYNC_OPERATION_LABELS, tierRedundancyLevel,
+} from "../format.js";
 
 // Fixed slot order, one categorical color per tier (identity, not redundancy level -- two tiers
 // at the same DWR level would otherwise render identically and be indistinguishable). See
@@ -166,6 +169,23 @@ function TierRow({ tier, fill, isHovered, onMouseEnter, onMouseLeave }) {
                 <div style={{ color: "var(--pf-t--global--text--color--subtle)" }}>
                     {tier.diskIds.length} disks &middot; {formatBytes(tier.segmentSizeBytes)} segment &rarr; {formatBytes(tier.usableBytes)} usable
                 </div>
+                {tier.syncOperation != null && (
+                    <div style={{ marginTop: "6px" }}>
+                        <Progress
+                            value={tier.syncPercentComplete ?? 0}
+                            title={SYNC_OPERATION_LABELS[tier.syncOperation] ?? tier.syncOperation}
+                            size={ProgressSize.sm}
+                            label={`${(tier.syncPercentComplete ?? 0).toFixed(1)}%`}
+                        />
+                        {(tier.syncSpeedKBps != null || tier.syncEtaMinutes != null) && (
+                            <div style={{ fontSize: "11px", color: "var(--pf-t--global--text--color--subtle)", marginTop: "2px" }}>
+                                {formatSyncSpeed(tier.syncSpeedKBps)}
+                                {tier.syncSpeedKBps != null && tier.syncEtaMinutes != null && " · "}
+                                {formatSyncEta(tier.syncEtaMinutes) != null && `${formatSyncEta(tier.syncEtaMinutes)} remaining`}
+                            </div>
+                        )}
+                    </div>
+                )}
             </div>
         </div>
     );

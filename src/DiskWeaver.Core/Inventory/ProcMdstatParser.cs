@@ -1,3 +1,4 @@
+using System.Globalization;
 using DiskWeaver.Core.Inventory.Abstractions;
 
 namespace DiskWeaver.Inventory;
@@ -11,6 +12,114 @@ namespace DiskWeaver.Inventory;
 /// </summary>
 public static class ProcMdstatParser
 {
+    /// <summary>
+    /// An in-progress recovery/resync/reshape/check on one array, as reported by its progress line
+    /// in `/proc/mdstat` (e.g. "recovery = 82.1% (.../...) finish=31170.0min speed=373K/sec"). Not
+    /// present at all means the array is fully in sync -- there's no "0%, done" entry for a healthy
+    /// array, only an absent one.
+    /// </summary>
+    public sealed record MdstatSyncStatus(string Operation, double PercentComplete, double? SpeedKBps, double? EtaMinutes);
+
+    /// <summary>Maps each array's device path (e.g. "/dev/md127") to its in-progress sync status, for arrays currently mid-recovery/resync/reshape/check.</summary>
+    public static IReadOnlyDictionary<string, MdstatSyncStatus> ParseSyncStatus(string mdstatContent)
+    {
+        var result = new Dictionary<string, MdstatSyncStatus>();
+        string? currentArrayDevice = null;
+
+        foreach (var rawLine in mdstatContent.Split('\n'))
+        {
+            var line = rawLine.TrimEnd('\r');
+            if (line.Length == 0)
+            {
+                currentArrayDevice = null;
+                continue;
+            }
+
+            if (!char.IsWhiteSpace(line[0]) && line.StartsWith("md", StringComparison.Ordinal))
+            {
+                var colonIndex = line.IndexOf(':');
+                currentArrayDevice = colonIndex < 0 ? null : $"/dev/{line[..colonIndex].Trim()}";
+                continue;
+            }
+
+            if (currentArrayDevice is null)
+            {
+                continue;
+            }
+
+            var status = TryParseSyncLine(line.Trim());
+            if (status is not null)
+            {
+                result[currentArrayDevice] = status;
+            }
+        }
+
+        return result;
+    }
+
+    // Handles two shapes: an in-progress line with a percentage, e.g.
+    // "[================>....]  recovery = 82.1% (3209047328/3906884096) finish=31170.0min speed=373K/sec",
+    // and a not-yet-started one, e.g. "resync=PENDING" (no progress bar, no percent yet -- reported
+    // as 0% so callers don't have to special-case a third state).
+    private static MdstatSyncStatus? TryParseSyncLine(string trimmedLine)
+    {
+        var rest = trimmedLine;
+        if (rest.StartsWith('['))
+        {
+            var closeBracket = rest.IndexOf(']');
+            if (closeBracket < 0)
+            {
+                return null;
+            }
+            rest = rest[(closeBracket + 1)..].TrimStart();
+        }
+
+        var eqIndex = rest.IndexOf('=');
+        if (eqIndex < 0)
+        {
+            return null;
+        }
+
+        var operation = rest[..eqIndex].Trim();
+        var afterEq = rest[(eqIndex + 1)..].Trim();
+
+        if (operation.Length == 0)
+        {
+            return null;
+        }
+
+        if (afterEq.StartsWith("PENDING", StringComparison.Ordinal))
+        {
+            return new MdstatSyncStatus(operation, 0, null, null);
+        }
+
+        var tokens = afterEq.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var percentToken = tokens.FirstOrDefault();
+        if (percentToken is null || !percentToken.EndsWith('%')
+            || !double.TryParse(percentToken[..^1], NumberStyles.Float, CultureInfo.InvariantCulture, out var percent))
+        {
+            return null;
+        }
+
+        double? speed = null;
+        double? eta = null;
+        foreach (var token in tokens)
+        {
+            if (token.StartsWith("speed=", StringComparison.Ordinal) && token.EndsWith("K/sec", StringComparison.Ordinal)
+                && double.TryParse(token["speed=".Length..^"K/sec".Length], NumberStyles.Float, CultureInfo.InvariantCulture, out var parsedSpeed))
+            {
+                speed = parsedSpeed;
+            }
+            else if (token.StartsWith("finish=", StringComparison.Ordinal) && token.EndsWith("min", StringComparison.Ordinal)
+                && double.TryParse(token["finish=".Length..^"min".Length], NumberStyles.Float, CultureInfo.InvariantCulture, out var parsedEta))
+            {
+                eta = parsedEta;
+            }
+        }
+
+        return new MdstatSyncStatus(operation, percent, speed, eta);
+    }
+
     /// <summary>Maps each member partition's full device path (e.g. "/dev/loop3p1") to its array's device path (e.g. "/dev/md127").</summary>
     public static IReadOnlyDictionary<string, string> ParseArrayMembership(string mdstatContent)
     {

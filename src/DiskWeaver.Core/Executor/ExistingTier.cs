@@ -29,6 +29,12 @@ namespace DiskWeaver.Executor;
 /// shape alone (both are 2-slot-configured, 1-real-member arrays), which is exactly why this is a
 /// separate, explicitly-tagged fact rather than inferred from <see cref="ConfiguredMemberCount"/>.
 /// </param>
+/// <param name="SyncOperation">
+/// mdadm's name for whatever's currently running against this array's data -- "recovery" (rebuilding
+/// a replaced/re-added member), "resync" (routine consistency pass, also used for "not yet started"),
+/// "reshape", or "check". Null means fully in sync, not "unknown" -- <c>/proc/mdstat</c> only reports
+/// a progress line while something is actually running.
+/// </param>
 public sealed record ExistingTier(
     string ArrayDevice,
     long SegmentSizeBytes,
@@ -36,7 +42,11 @@ public sealed record ExistingTier(
     RaidLevel RaidLevel,
     IReadOnlyList<string> PartitionPaths,
     int? ConfiguredMemberCount = null,
-    bool IsUnprotectedByDesign = false)
+    bool IsUnprotectedByDesign = false,
+    string? SyncOperation = null,
+    double? SyncPercentComplete = null,
+    double? SyncSpeedKBps = null,
+    double? SyncEtaMinutes = null)
 {
     public int ConfiguredMemberCountOrDefault => ConfiguredMemberCount ?? DiskIds.Count;
 

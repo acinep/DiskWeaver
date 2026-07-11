@@ -1,4 +1,5 @@
 using DiskWeaver.Core.Executor.Abstractions;
+using DiskWeaver.Inventory;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 
@@ -33,19 +34,53 @@ public sealed class MdadmLvmPoolStateSource(ICommandRunner? commandRunner = null
             .GroupBy(l => l.VgName)
             .ToDictionary(g => g.Key, g => g.First().LvName);
 
+        // Read once and shared across every tier below, rather than one call per array -- /proc/mdstat
+        // already covers the whole host in one shot. Only arrays currently mid recovery/resync/reshape/
+        // check show up here at all; an array with no entry is simply fully in sync.
+        var syncStatusByArrayDevice = ProcMdstatParser.ParseSyncStatus(_runner.Run("cat", ["/proc/mdstat"]));
+
         var pools = new List<ExistingPoolState>();
 
         foreach (var vgGroup in pvs.GroupBy(pv => pv.VgName))
         {
-            var tiers = vgGroup.Select(pv => DescribeTier(pv.PvName, pv.HasTag("diskweaver-unprotected"))).ToList();
             var volumeName = volumeNameByVg.GetValueOrDefault(vgGroup.Key, "data");
-            pools.Add(new ExistingPoolState(vgGroup.Key, volumeName, tiers));
+            var tiers = new List<ExistingTier>();
+            string? error = null;
+
+            foreach (var pv in vgGroup)
+            {
+                // A PV backed by a currently-inactive/missing mdadm array (e.g. after a reboot that
+                // raced incremental assembly, or a member disk that's failed) reports as the literal
+                // string "[unknown]" here rather than a real device path -- confirmed live. Passing
+                // that straight to `mdadm --detail --export` doesn't fail gracefully, it errors with
+                // "cannot open [unknown]: No such file or directory", so it's checked for up front
+                // rather than caught after the fact.
+                if (pv.PvName == "[unknown]")
+                {
+                    error = $"Volume group '{vgGroup.Key}' has a physical volume backed by an array that "
+                        + "isn't currently running (device unknown to LVM) -- reassemble the underlying "
+                        + "mdadm array (see /proc/mdstat) before this pool's full state can be read.";
+                    continue;
+                }
+
+                try
+                {
+                    var syncStatus = syncStatusByArrayDevice.GetValueOrDefault(pv.PvName);
+                    tiers.Add(DescribeTier(pv.PvName, pv.HasTag("diskweaver-unprotected"), syncStatus));
+                }
+                catch (InvalidOperationException ex)
+                {
+                    error = $"Volume group '{vgGroup.Key}', physical volume '{pv.PvName}': {ex.Message}";
+                }
+            }
+
+            pools.Add(new ExistingPoolState(vgGroup.Key, volumeName, tiers, error));
         }
 
         return pools;
     }
 
-    private ExistingTier DescribeTier(string arrayDevice, bool isUnprotectedByDesign)
+    private ExistingTier DescribeTier(string arrayDevice, bool isUnprotectedByDesign, ProcMdstatParser.MdstatSyncStatus? syncStatus)
     {
         var export = _runner.Run("mdadm", ["--detail", "--export", arrayDevice]);
         var (raidLevel, partitionPaths, configuredMemberCount) = MdadmDetailParser.Parse(export);
@@ -58,7 +93,9 @@ public sealed class MdadmLvmPoolStateSource(ICommandRunner? commandRunner = null
         var sizeText = _runner.Run("blockdev", ["--getsize64", partitionPaths[0]]).Trim();
         var segmentSizeBytes = long.Parse(sizeText);
 
-        return new ExistingTier(arrayDevice, segmentSizeBytes, diskIds, raidLevel, partitionPaths, configuredMemberCount, isUnprotectedByDesign);
+        return new ExistingTier(
+            arrayDevice, segmentSizeBytes, diskIds, raidLevel, partitionPaths, configuredMemberCount, isUnprotectedByDesign,
+            syncStatus?.Operation, syncStatus?.PercentComplete, syncStatus?.SpeedKBps, syncStatus?.EtaMinutes);
     }
 
     private T RunJson<T>(string command, string[] arguments, JsonTypeInfo<T> typeInfo)

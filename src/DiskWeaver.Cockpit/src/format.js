@@ -27,6 +27,21 @@ export function tierRedundancyLevel(tier) {
     return (tier.configuredMemberCountOrDefault ?? tier.diskIds.length) - 1; // Mirror -> DWR1 or DWR2
 }
 
+// mdadm's own operation names (from /proc/mdstat's progress line) -- see ExistingTier.SyncOperation.
+export const SYNC_OPERATION_LABELS = { recovery: "Rebuilding", resync: "Resyncing", reshape: "Reshaping", check: "Checking" };
+
+export function formatSyncSpeed(kbps) {
+    if (kbps == null) return null;
+    return kbps >= 1000 ? `${(kbps / 1000).toFixed(1)} MB/s` : `${Math.round(kbps)} KB/s`;
+}
+
+export function formatSyncEta(minutes) {
+    if (minutes == null) return null;
+    if (minutes < 60) return `${Math.round(minutes)} min`;
+    const hours = minutes / 60;
+    return hours < 48 ? `${hours.toFixed(1)} hr` : `${(hours / 24).toFixed(1)} days`;
+}
+
 export function poolType(pool) {
     const levels = [...new Set(pool.tiers.map(tierRedundancyLevel))];
     if (levels.length !== 1) return "Mixed";

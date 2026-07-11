@@ -59,6 +59,28 @@ public class DaemonEndpointsTests : IClassFixture<DaemonWebApplicationFactory>
     }
 
     [Fact]
+    public async Task PostPoolTeardown_PoolWithUnreadableTier_ReturnsConflict_NotAttempted()
+    {
+        // Regression test: a pool whose state couldn't be fully read (e.g. one tier's array isn't
+        // currently running) must not be torn down against partial/unknown information -- refuse
+        // outright rather than plan a teardown from an incomplete tier list.
+        var original = _factory.PoolState.Pools;
+        try
+        {
+            _factory.PoolState.Pools = [original[0] with { Error = "tier array not running" }];
+
+            var response = await _client.PostAsync("/pools/diskweaver-pool/teardown", content: null);
+
+            Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+            Assert.DoesNotContain(_factory.StepRunner.Invocations, s => s.Command == "vgremove");
+        }
+        finally
+        {
+            _factory.PoolState.Pools = original;
+        }
+    }
+
+    [Fact]
     public async Task PostExpand_AddingASingleLargerDisk_GrowsExistingTierInPlace_AndFormsANewTierFromTheExcess()
     {
         // Fake pool state: diskweaver-pool is a 2-disk mirror over fake-0/fake-1 (2TB each) --

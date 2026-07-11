@@ -97,6 +97,19 @@ public class CommandPlannerIncrementalTests
         Assert.Equal(["diskweaver-pool", "/dev/md/diskweaver-pool-tier1"], vgextend.Arguments);
 
         Assert.Contains(plan.Steps, s => s.Command == "lvextend");
+
+        // Regression test for a real incident: a newly-created array with no mdadm.conf entry lost
+        // a race with udev's incremental assembly on reboot and came up "inactive" -- the fix is to
+        // persist every genuinely new array (grown-in-place tier0 is untouched; only the new tier1
+        // needs this) so the kernel can find it at boot without racing.
+        var persistStep = Assert.Single(plan.Steps, s => s.Command == "sh");
+        Assert.Equal(
+            ["-c", "mdadm --detail --scan \"$@\" >> /etc/mdadm/mdadm.conf", "sh", "/dev/md/diskweaver-pool-tier1"],
+            persistStep.Arguments);
+        Assert.Contains(plan.Steps, s => s.Command == "update-initramfs" && s.Arguments.SequenceEqual(new[] { "-u" }));
+        Assert.True(
+            plan.Steps.ToList().IndexOf(persistStep) > plan.Steps.ToList().FindIndex(s => s.Command == "vgextend"),
+            "mdadm.conf must be persisted only after the array successfully joined the VG.");
     }
 
     [Fact]

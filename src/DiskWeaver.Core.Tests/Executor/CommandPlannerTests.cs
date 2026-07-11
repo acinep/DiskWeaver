@@ -29,6 +29,16 @@ public class CommandPlannerTests
 
         Assert.Contains(plan.Steps, s => s.Command == "lvcreate"
             && s.Arguments.SequenceEqual(new[] { "-l", "100%FREE", "-n", "data", "diskweaver-pool" }));
+
+        // Both newly-created arrays must be persisted to mdadm.conf so the kernel can auto-assemble
+        // them at boot -- array device paths are passed as `sh -c` positional parameters, never
+        // interpolated into the script text, since poolName (part of the path) is caller-supplied.
+        var persistStep = Assert.Single(plan.Steps, s => s.Command == "sh");
+        Assert.Equal(
+            ["-c", "mdadm --detail --scan \"$@\" >> /etc/mdadm/mdadm.conf", "sh",
+                "/dev/md/diskweaver-pool-tier0", "/dev/md/diskweaver-pool-tier1"],
+            persistStep.Arguments);
+        Assert.Contains(plan.Steps, s => s.Command == "update-initramfs" && s.Arguments.SequenceEqual(new[] { "-u" }));
     }
 
     [Fact]
