@@ -10,10 +10,10 @@ on:
 jobs:
   build-test-package:
     runs-on: ubuntu-latest
-    # contents: write is only actually needed for the release step below (tag pushes) --
-    # left at job level rather than per-step since GITHUB_TOKEN permissions aren't step-scoped.
+    # Read-only: this job builds/tests/packages on every push, PR, and dispatch, so it
+    # gets no write access. Only the tag-triggered release job below needs contents: write.
     permissions:
-      contents: write
+      contents: read
     steps:
       - uses: actions/checkout@v7
 
@@ -67,11 +67,26 @@ jobs:
           name: diskweaver-deb
           path: dist/*.deb
 
-      # Only tag pushes (e.g. `git tag v0.1.0 && git push --tags`) get a real, permanent,
-      # publicly-downloadable release -- the artifact above expires (90 days) and needs GitHub
-      # repo access to fetch; this doesn't.
+  # Only tag pushes (e.g. `git tag v0.1.0 && git push --tags`) get a real, permanent,
+  # publicly-downloadable release -- the artifact above expires (90 days) and needs GitHub
+  # repo access to fetch; this doesn't. Split into its own job (rather than a step in
+  # build-test-package) so contents: write is only ever granted for tag pushes, never for
+  # ordinary PR/branch builds.
+  release:
+    needs: build-test-package
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v7
+        with:
+          name: diskweaver-deb
+          path: dist
+
       - name: Create GitHub Release
-        if: github.ref_type == 'tag'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release create "${{ github.ref_name }}" dist/*.deb --title "${{ github.ref_name }}" --generate-notes

@@ -10,6 +10,15 @@ See [`docs/PRD.md`](docs/PRD.md) for the full product rationale and
 [`docs/algorithm.md`](docs/algorithm.md) for how the tiering/pooling math
 actually works.
 
+> [!WARNING]
+> **DiskWeaver is pre-1.0 software that partitions disks and creates/
+> modifies RAID arrays and LVM volumes.** Used incorrectly, or hit by a
+> bug, it can destroy data. Test against disposable loop devices first
+> (`docker/e2e-test.sh` or [`docs/testing.md`](docs/testing.md) — neither
+> touches a real disk) before pointing it at disks that matter, and keep
+> verified backups regardless. See [Project status](#project-status)
+> below for what is and isn't validated yet.
+
 ## Why DiskWeaver?
 
 Real storage collections are messy — drives retired from a primary NAS,
@@ -104,6 +113,56 @@ setup paths.
 - **Manual loop-device validation** (no daemon, just the CLI + real
   `mdadm`/`parted` against disposable loop devices): see
   [`docs/testing.md`](docs/testing.md).
+- **Automated loop-device e2e test** (the same validation as above,
+  scripted end-to-end and disposable): `docker/e2e-test.sh`, runnable
+  either inside a `--privileged` Docker container or directly on any
+  Linux box (WSL2 included) — no Docker install required either way. Not
+  a build for anything you'd ship — it's a `dotnet build`, not the AOT
+  daemon publish or the frontends. See [`docker/README.md`](docker/README.md).
+
+## Project status
+
+Pre-1.0. The planner, executor, daemon, both frontends, and the CLI are
+built and exercised end-to-end against real loop devices (and real
+hardware during development) — see [`docs/execution.md`](docs/execution.md)
+for exactly what's been run. That said:
+
+- **Tested platforms:** Ubuntu (CI runs on `ubuntu-latest`; day-to-day
+  dev is Ubuntu under WSL2). Packaging is `.deb` only — no `.rpm`, so
+  Fedora/RHEL-family aren't currently installable even though the
+  planner/executor themselves are distro-agnostic.
+- **Supported redundancy:** single-disk fault tolerance (DWR-1: mirror or
+  RAID5 depending on disk count) and dual-disk fault tolerance (DWR-2:
+  3-way mirror or RAID6). See [`docs/algorithm.md`](docs/algorithm.md).
+- **Supported lifecycle operations:** create a pool; expand it by adding
+  a disk or replacing one with a larger one, including the RAID-level
+  migrations that fall out of that (e.g. mirror → RAID5 → RAID6); detect
+  and guide recovery from a degraded/failed disk. All confirmed against
+  real hardware or loop devices per [`docs/execution.md`](docs/execution.md).
+- **Not supported:**
+  - **Shrinking a pool** (removing a disk without replacement).
+  - **Importing an existing hand-built mdadm/LVM layout** — DiskWeaver
+    only manages pools it created (see `docs/PRD.md` §9).
+  - A degraded/failed-pool health dashboard in the UI (`docs/PRD.md`
+    §8.4) — degradation is detectable via the API today, just not yet
+    surfaced as a dedicated view.
+  - An explicit "abort a running execution" endpoint
+    (see [`docs/daemon-api.md`](docs/daemon-api.md)).
+  - The CLI does not yet talk to the daemon (it emits a reviewable
+    script instead), so its behavior can drift from the two web
+    frontends — see the `DiskWeaver.Cli` row above.
+- **Crash recovery:** every execution step is journaled before/after
+  running, and re-running a plan after a crash is idempotent (completed
+  steps aren't repeated) — validated by manually killing the daemon
+  mid-execution and restarting. Systematic fault-injection (failing
+  after *every* individual command and confirming safe recovery or
+  explicit manual-recovery instructions) is not yet a standing test —
+  it's the main remaining trust gap for anyone running this against
+  real data, and the next big investment area.
+
+If you hit a case not covered above, please open an issue — see
+[`SECURITY.md`](SECURITY.md) instead if it's a vulnerability rather than
+a bug.
 
 ## Docs
 
@@ -117,3 +176,4 @@ setup paths.
 - [`docs/deployment.md`](docs/deployment.md) — packaging and production install.
 - [`docs/testing.md`](docs/testing.md) — manual validation against real loop devices.
 - [`docs/conventions.md`](docs/conventions.md) — coding conventions.
+- [`docker/README.md`](docker/README.md) — the disposable, scripted version of `docs/testing.md`'s e2e test; not a deployment artifact.
