@@ -70,8 +70,10 @@ Each has a matching `*.Tests` project (xUnit).
 ## Building and testing
 
 Requires the .NET 10 SDK. `DiskWeaver.Daemon` publishes self-contained
-NativeAOT for `linux-x64` — Linux + `clang`/`zlib1g-dev` are needed for that
-specific step, not for `dotnet build`/`dotnet test` themselves.
+NativeAOT for `linux-x64` — that specific step needs a Linux toolchain
+(`clang`/`zlib1g-dev`), so on Windows it needs WSL2 (see
+[`CONTRIBUTING.md`](CONTRIBUTING.md)); `dotnet build`/`dotnet test`
+themselves don't, and run fine on Windows directly.
 
 ```bash
 dotnet test src/DiskWeaver.slnx -c Release

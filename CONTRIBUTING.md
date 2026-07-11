@@ -7,9 +7,15 @@
   disk access, no shelling out. Builds and tests on Windows, macOS, or
   Linux with just the .NET 10 SDK.
 - **`DiskWeaver.Cli`** and **`DiskWeaver.Daemon`** shell out to
-  `mdadm`/`parted`/LVM2/PAM. You can build them anywhere, but *running*
-  them for real — creating an actual array, exercising the daemon against
-  a real disk or loop device — needs a real Linux kernel.
+  `mdadm`/`parted`/LVM2/PAM. A plain `dotnet build`/`dotnet test` of
+  either builds and runs fine on Windows or macOS. But *publishing* the
+  daemon the way it actually ships — self-contained NativeAOT for
+  `linux-x64` — needs a Linux toolchain (`clang`/`zlib1g-dev`) to compile
+  against, and *running* either for real — creating an actual array,
+  exercising the daemon against a real disk or loop device — needs a
+  real Linux kernel. On Windows, both of those mean WSL2 (or another
+  Linux environment); there's no way to cross-compile or run them
+  directly from Windows.
 - **`DiskWeaver.Cockpit`** (the Cockpit plugin + standalone SPA, one
   shared React/PatternFly tree) is plain Node/esbuild — builds anywhere
   Node runs. Seeing it do anything needs a daemon to talk to, which loops
@@ -38,7 +44,10 @@ required.
 
 You don't need `scripts/wsl-dev/setup-wsl.sh` or `deploy-wsl.sh` at all.
 Both exist purely to work around the Windows↔WSL2 boundary — rsyncing
-the repo off the 9p-mounted checkout into WSL2's native filesystem, then
+the repo off the 9p-mounted checkout (9p is the network filesystem
+protocol WSL2 uses to expose your Windows drives at `/mnt/c/...` —
+every file access there is a network call back to the Windows host, not
+a local disk operation) into WSL2's native filesystem, then
 publishing/installing the daemon from that copy. On a native Linux box
 there's no boundary to cross: you're developing directly in the checkout,
 so `dotnet publish` + `cp`/`systemctl restart` (the same two steps
