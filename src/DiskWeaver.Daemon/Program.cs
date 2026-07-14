@@ -695,6 +695,27 @@ app.MapPost("/disks/wipe", (
     return Results.Ok(journal);
 });
 
+// Brings up any mdadm array/LVM volume group that exists on disk but isn't currently
+// assembled/active -- the situation left behind by installing a fresh OS onto disks that already
+// hold a DiskWeaver pool (the `diskweaver-managed` VG tag lives in LVM's own on-disk metadata, so
+// it survives the reinstall, but the kernel still needs telling to reassemble/activate it before
+// GET /pools can see it -- see MdadmLvmPoolStateSource's "[unknown]" PV handling). Unconditional,
+// not scoped to any one pool: there's nothing to select yet, that's exactly the problem this fixes.
+app.MapPost("/arrays/reassemble", (IJournalStore journalStore, IStepRunner stepRunner) =>
+{
+    var executionPlan = CommandPlanner.BuildReassemble();
+    var executionId = "arrays-reassemble";
+
+    ExecutionJournal? journal = null;
+    do
+    {
+        journal = ExecutionRunner.AdvanceOneStep(executionId, "reassemble", executionPlan, journal, stepRunner);
+        journalStore.Save(journal);
+    } while (journal.Status == ExecutionJournalStatus.Running);
+
+    return Results.Ok(journal);
+});
+
 app.Run();
 
 // Every error response goes through this rather than Results.BadRequest(string)/Conflict(string)/

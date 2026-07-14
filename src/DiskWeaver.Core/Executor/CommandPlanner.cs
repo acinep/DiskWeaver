@@ -407,6 +407,63 @@ public static class CommandPlanner
     public static long HypotheticalFullRebuildCapacityBytes(IReadOnlyList<Disk> allDisks, RedundancyLevel redundancy) =>
         PartitionLayout.PlanForRealDisks(allDisks, redundancy).Tiers.Sum(t => t.UsableBytes);
 
+    /// <summary>
+    /// Brings up any mdadm array/LVM volume group that already exists on this host's disks (its
+    /// on-disk superblock/metadata is intact) but isn't currently assembled/active -- the situation
+    /// left behind by installing a fresh OS onto disks that already hold a DiskWeaver pool (see
+    /// docs/state-model.md's ownership section: the `diskweaver-managed` VG tag lives in LVM's own
+    /// metadata on disk, so it survives an OS reinstall untouched, but the kernel still has to be
+    /// told to reassemble the arrays and activate the VG before <see cref="MdadmLvmPoolStateSource"/>
+    /// can see them). Safe to run unconditionally, including when nothing needs it -- both commands
+    /// are no-ops (exit 0) against arrays/VGs that are already assembled/active, and neither one
+    /// creates, destroys, or modifies data.
+    /// </summary>
+    public static ExecutionPlan BuildReassemble() => new([
+        new ExecutionStep(
+            "Assemble any inactive mdadm arrays found on this host's disks",
+            "mdadm",
+            ["--assemble", "--scan"]),
+
+        // Assembling above only takes effect for the current boot -- without this, an array that
+        // was foreign a moment ago (e.g. right after installing a fresh OS onto disks that already
+        // held a pool) goes right back to inactive on the next reboot, same underlying problem
+        // AppendMdadmConfPersistSteps exists for on the build side. Unlike that helper, the array
+        // names here aren't known in advance (they're whatever --assemble --scan just found, not
+        // ones this plan created), and this action can be run repeatedly -- so a plain `>>` append
+        // would duplicate ARRAY lines on every re-run. Each line `mdadm --detail --scan` reports is
+        // only appended if it isn't already present (grep -qxF), making this idempotent. No
+        // caller-supplied values reach the shell text, so this is safe as a literal -c string.
+        //
+        // Whether a line was already present *is* the "was this foreign" signal, and worth
+        // surfacing rather than swallowing: a line already in mdadm.conf means this OS install
+        // already knew about that array (DiskWeaver wrote it at build time, or a previous
+        // reassemble did); a line that's missing means this is the first time this install has
+        // ever seen it -- exactly the case of a pool built under a previous OS on the same disks.
+        // Stdout here lands in the step's ExecutionStepRecord.Output, visible in the journal.
+        new ExecutionStep(
+            "Persist any newly-assembled array(s) in mdadm.conf so they auto-assemble at boot",
+            "sh",
+            ["-c",
+                "before=$(grep -c '' /etc/mdadm/mdadm.conf 2>/dev/null || echo 0); "
+                + "mdadm --detail --scan | while IFS= read -r line; do "
+                + "grep -qxF \"$line\" /etc/mdadm/mdadm.conf 2>/dev/null || { "
+                + "echo \"$line\" >> /etc/mdadm/mdadm.conf; "
+                + "echo \"Newly discovered (not previously known to this OS install -- likely from a previous install): $line\"; "
+                + "}; done; "
+                + "after=$(grep -c '' /etc/mdadm/mdadm.conf 2>/dev/null || echo 0); "
+                + "[ \"$after\" = \"$before\" ] && echo 'No new arrays found -- everything already known to this OS install.'; true"]),
+
+        new ExecutionStep(
+            "Rebuild the initramfs so early boot can see mdadm.conf's new entries",
+            "update-initramfs",
+            ["-u"]),
+
+        new ExecutionStep(
+            "Activate any inactive LVM volume groups now backed by those arrays",
+            "vgchange",
+            ["-ay"]),
+    ]);
+
     private static void ThrowIfOrphaned(IReadOnlyList<ExistingTier> orphaned)
     {
         if (orphaned.Count > 0)

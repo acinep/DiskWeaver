@@ -3,7 +3,7 @@ using DiskWeaver.Cli;
 if (args.Length == 0)
 {
     Console.Error.WriteLine("Usage: diskweaver <command> [options]");
-    Console.Error.WriteLine("Commands: inventory, plan, wipe, testkit");
+    Console.Error.WriteLine("Commands: inventory, plan, wipe, reassemble, testkit");
     return 1;
 }
 
@@ -12,6 +12,7 @@ return args[0] switch
     "inventory" => InventoryCommand.Run(args[1..]),
     "plan" => PlanCommand.Run(args[1..]),
     "wipe" => WipeCommand.Run(args[1..]),
+    "reassemble" => ReassembleCommand.Run(args[1..]),
     "testkit" => TestKitCommand.Run(args[1..]),
     _ => Fail($"Unknown command '{args[0]}'."),
 };

@@ -5,6 +5,7 @@ import { ErrorBanner } from "./ErrorBanner.jsx";
 import { PoolsTable } from "./PoolsTable.jsx";
 import { DiskInventory, countAvailableDisks } from "./DiskInventory.jsx";
 import { CreateExpandWizard } from "./CreateExpandWizard.jsx";
+import { ReassembleButton } from "./ReassembleButton.jsx";
 
 // onLogout is only ever passed by the standalone build (src/standalone/StandaloneApp.jsx) --
 // Cockpit's own session/logout is handled by the Cockpit shell itself, entirely outside this
@@ -88,7 +89,10 @@ export function App({ onLogout } = {}) {
             <PageSection>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
                     <Title headingLevel="h1" style={{ marginBottom: "1rem" }}>DiskWeaver</Title>
-                    {onLogout && <Button variant="link" onClick={onLogout}>Log out</Button>}
+                    <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                        <ReassembleButton onDone={refreshPoolsAndDisks} />
+                        {onLogout && <Button variant="link" onClick={onLogout}>Log out</Button>}
+                    </div>
                 </div>
                 <ErrorBanner message={error} />
                 <Tabs activeKey={activeTabKey} onSelect={(_, key) => setActiveTabKey(key)}>

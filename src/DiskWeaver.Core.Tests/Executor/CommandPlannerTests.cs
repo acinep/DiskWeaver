@@ -95,6 +95,35 @@ public class CommandPlannerTests
     }
 
     [Fact]
+    public void BuildReassemble_AssemblesPersistsThenActivates_InThatOrder()
+    {
+        var plan = CommandPlanner.BuildReassemble();
+
+        Assert.Equal(4, plan.Steps.Count);
+        Assert.Equal("mdadm", plan.Steps[0].Command);
+        Assert.Equal(["--assemble", "--scan"], plan.Steps[0].Arguments);
+        Assert.Equal("sh", plan.Steps[1].Command);
+        Assert.Equal("update-initramfs", plan.Steps[2].Command);
+        Assert.Equal(["-u"], plan.Steps[2].Arguments);
+        Assert.Equal("vgchange", plan.Steps[3].Command);
+        Assert.Equal(["-ay"], plan.Steps[3].Arguments);
+    }
+
+    [Fact]
+    public void BuildReassemble_MdadmConfPersistStep_IsIdempotent_NeverBlindlyAppends()
+    {
+        // Unlike AppendMdadmConfPersistSteps (used on the build side, where each array name is
+        // only ever persisted once), this action can be re-run against arrays already recorded in
+        // mdadm.conf from a previous reassemble -- must dedupe per line, not blindly append.
+        var plan = CommandPlanner.BuildReassemble();
+
+        var persistStep = Assert.Single(plan.Steps, s => s.Command == "sh");
+        var script = Assert.Single(persistStep.Arguments.Skip(1));
+        Assert.Contains("grep -qxF", script);
+        Assert.Contains("mdadm --detail --scan", script);
+    }
+
+    [Fact]
     public void EachDiskIsLabeledOnlyOnce_EvenAcrossMultipleTiers()
     {
         var poolPlan = TieringPlanner.Plan(Disks(2, 2, 4, 4, 4), RedundancyLevel.Dwr1);
