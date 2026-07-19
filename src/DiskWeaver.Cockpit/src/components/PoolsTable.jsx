@@ -6,6 +6,15 @@ import { formatBytes, RAID_LEVEL_LABELS, poolType } from "../format.js";
 import { TeardownButton } from "./TeardownButton.jsx";
 import { ProtectTierButton } from "./ProtectTierButton.jsx";
 import { PoolDiagramModal } from "./PoolDiagramModal.jsx";
+import { SyncProgress } from "./SyncProgress.jsx";
+
+// True if any tier of any pool is currently mid recovery/resync/reshape/check -- used by App.jsx
+// to decide whether to keep auto-polling GET /pools, since that's the only way this ever changes
+// without the user clicking Refresh (see PoolsTable's own sync-progress row for why watching it
+// matters: a multi-hour raid5->raid6 reshape looks indistinguishable from "stuck" otherwise).
+export function hasActiveSync(pools) {
+    return pools.some(pool => pool.tiers.some(tier => tier.syncOperation != null));
+}
 
 function tiersSummary(pool, disks, pools, onProtectDone) {
     return pool.tiers.map((tier, i) => {
@@ -43,6 +52,11 @@ function tiersSummary(pool, disks, pools, onProtectDone) {
                             pools={pools}
                             onDone={onProtectDone}
                         />
+                    </div>
+                )}
+                {tier.syncOperation != null && (
+                    <div style={{ marginTop: "4px", maxWidth: "220px" }}>
+                        <SyncProgress tier={tier} />
                     </div>
                 )}
             </div>

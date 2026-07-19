@@ -144,10 +144,22 @@ public static class ProcMdstatParser
             var arrayDevice = $"/dev/{line[..colonIndex].Trim()}";
             var tokens = line[(colonIndex + 1)..].Split(' ', StringSplitOptions.RemoveEmptyEntries);
 
-            // tokens[0] is "active"/"inactive", tokens[1] is the level (e.g. "raid1") -- neither is
-            // a member device, so both are skipped; everything after is a member, each optionally
-            // suffixed with its role, e.g. "loop3p1[2](S)" for a spare or "sdb1[0]" for an active one.
-            foreach (var token in tokens.Skip(2))
+            // tokens[0] is "active"/"inactive", optionally followed by one or more parenthesized
+            // state annotations -- e.g. "active (auto-read-only) raid5 sdi2[1] ..." (confirmed
+            // live: a freshly-assembled array the kernel hasn't seen a write to yet). Skipping a
+            // fixed 2 tokens here used to treat the RAID level itself ("raid5") as a phantom member
+            // whenever one of these annotations was present, since it shifted every token after
+            // "active" by one. Skip "active"/"inactive", then any "(...)" tokens, then the level --
+            // everything after that is a real member, each optionally suffixed with its role, e.g.
+            // "loop3p1[2](S)" for a spare or "sdb1[0]" for an active one.
+            var memberStart = 1;
+            while (memberStart < tokens.Length && tokens[memberStart].StartsWith('('))
+            {
+                memberStart++;
+            }
+            memberStart++; // the level token, e.g. "raid1"/"raid5"
+
+            foreach (var token in tokens.Skip(memberStart))
             {
                 var bracketIndex = token.IndexOf('[');
                 var memberName = bracketIndex < 0 ? token : token[..bracketIndex];

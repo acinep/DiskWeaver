@@ -46,6 +46,35 @@ public class ProcMdstatParserTests
     }
 
     [Fact]
+    public void AutoReadOnlyArray_DoesNotTreatTheRaidLevelAsAPhantomMember()
+    {
+        // Regression test for a real bug found live: "active (auto-read-only) raid5 ..." (a
+        // freshly-assembled array the kernel hasn't seen a write to yet) has an extra state token
+        // between "active" and the RAID level that ParseArrayMembership's old fixed Skip(2) didn't
+        // account for -- it shifted every token by one, so "raid5" itself got treated as a member
+        // device (mapped to "/dev/raid5"), while still (by luck) keeping every real member too.
+        const string mdstat = """
+            Personalities : [raid1] [raid4] [raid5] [raid6]
+            md126 : active (auto-read-only) raid5 sdi2[1] sdh2[0] sdf2[6] sde2[4] sdk2[3] sdj2[2]
+                  19534379520 blocks super 1.2 level 5, 512k chunk, algorithm 2 [6/6] [UUUUUU]
+                  bitmap: 0/30 pages [0KB], 65536KB chunk
+
+            unused devices: <none>
+            """;
+
+        var membership = ProcMdstatParser.ParseArrayMembership(mdstat);
+
+        Assert.Equal("/dev/md126", membership["/dev/sdi2"]);
+        Assert.Equal("/dev/md126", membership["/dev/sdh2"]);
+        Assert.Equal("/dev/md126", membership["/dev/sdf2"]);
+        Assert.Equal("/dev/md126", membership["/dev/sde2"]);
+        Assert.Equal("/dev/md126", membership["/dev/sdk2"]);
+        Assert.Equal("/dev/md126", membership["/dev/sdj2"]);
+        Assert.False(membership.ContainsKey("/dev/raid5"));
+        Assert.Equal(6, membership.Count);
+    }
+
+    [Fact]
     public void NoArraysAssembled_ReturnsEmpty()
     {
         const string mdstat = """

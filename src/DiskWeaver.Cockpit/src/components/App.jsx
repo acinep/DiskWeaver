@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { Page, PageSection, Title, Tabs, Tab, TabTitleText, Button } from "@patternfly/react-core";
 import { apiGetJson } from "../api.js";
 import { ErrorBanner } from "./ErrorBanner.jsx";
-import { PoolsTable } from "./PoolsTable.jsx";
+import { PoolsTable, hasActiveSync } from "./PoolsTable.jsx";
 import { DiskInventory, countAvailableDisks } from "./DiskInventory.jsx";
 import { CreateExpandWizard } from "./CreateExpandWizard.jsx";
 import { ReassembleButton } from "./ReassembleButton.jsx";
@@ -20,12 +20,21 @@ export function App({ onLogout } = {}) {
     const [wizardTarget, setWizardTarget] = useState(null);
     const [activeTabKey, setActiveTabKey] = useState("pools");
 
-    const loadPools = useCallback(() => {
-        setPoolsLoading(true);
+    // silent skips the loading flag -- used by the background sync-progress poll below, so the
+    // table doesn't blink out to a Spinner every 10s while a reshape/resync is running. The
+    // explicit "Refresh" button and every other caller still want the normal loading indicator.
+    const loadPools = useCallback((options = {}) => {
+        if (!options.silent) {
+            setPoolsLoading(true);
+        }
         return apiGetJson("/pools")
             .then(setPools)
             .catch(err => setError(`GET /pools failed: ${err.message || err}`))
-            .finally(() => setPoolsLoading(false));
+            .finally(() => {
+                if (!options.silent) {
+                    setPoolsLoading(false);
+                }
+            });
     }, []);
 
     const loadDisks = useCallback(() => {
@@ -44,6 +53,19 @@ export function App({ onLogout } = {}) {
         loadPools();
         loadDisks();
     }, [loadPools, loadDisks]);
+
+    // While any tier is mid recovery/resync/reshape/check (e.g. a raid5->raid6 reshape that can
+    // run for hours), GET /pools is the only thing that ever changes without the user clicking
+    // Refresh -- without this, a long reshape looks indistinguishable from stuck. Reschedules
+    // itself off the freshly-loaded `pools` each time, rather than a fixed setInterval, so polling
+    // stops the moment nothing's actually in progress.
+    useEffect(() => {
+        if (!hasActiveSync(pools)) {
+            return undefined;
+        }
+        const timer = setTimeout(() => loadPools({ silent: true }), 10_000);
+        return () => clearTimeout(timer);
+    }, [pools, loadPools]);
 
     function closeWizard() {
         setWizardTarget(null);
