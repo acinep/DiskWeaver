@@ -21,6 +21,13 @@ export function poolNameByDiskId(pools) {
 // A disk already in a pool is expected to be non-blank (it's a live mdadm/LVM member by design) --
 // "not blank" is only worth flagging for a disk that ISN'T already accounted for by a pool, since
 // that's the case `plan`/the create-pool wizard would otherwise refuse with no earlier warning.
+//
+// disk.raidLvmSignatureOwner (set only when disk.isBlank is false because of an mdadm/LVM
+// signature, never for a plain filesystem) distinguishes *why* it's not blank: "diskweaver" means
+// this looks like a leftover DiskWeaver pool disk (see DiskSignatureOwnership.Annotate on the
+// daemon side for how that's confirmed via the VG tag); "foreign" means a RAID/LVM signature
+// confirmed NOT DiskWeaver's; "unknown" means DiskWeaver can't currently tell (the array isn't
+// assembled, so the VG tag isn't readable) -- reassembling it may resolve that.
 export function diskStatus(disk, busyByDiskId) {
     if (busyByDiskId.has(disk.id)) {
         return `already in ${busyByDiskId.get(disk.id)}`;
@@ -28,7 +35,19 @@ export function diskStatus(disk, busyByDiskId) {
     if (disk.isLikelySystemDisk) {
         return "likely system/boot disk -- do not use";
     }
-    return disk.isBlank ? "" : "not blank -- wipe before use";
+    if (disk.isBlank) {
+        return "";
+    }
+    switch (disk.raidLvmSignatureOwner) {
+    case "diskweaver":
+        return "not blank -- leftover DiskWeaver pool signature -- wipe before use";
+    case "foreign":
+        return "not blank -- foreign RAID/LVM signature -- wipe before use";
+    case "unknown":
+        return "not blank -- existing RAID/LVM signature, owner unknown (reassemble to check) -- wipe before use";
+    default:
+        return "not blank -- wipe before use";
+    }
 }
 
 // Wipe is only ever offered for a disk that's both not already claimed by a pool (that'd be a live
@@ -63,6 +82,7 @@ export function DiskInventory({ disks, pools, loading, onRefresh }) {
                             <Thead>
                                 <Tr>
                                     <Th>Disk</Th>
+                                    <Th>Device</Th>
                                     <Th>Size</Th>
                                     <Th>Status</Th>
                                     <Th></Th>
@@ -72,6 +92,7 @@ export function DiskInventory({ disks, pools, loading, onRefresh }) {
                                 {disks.map(disk => (
                                     <Tr key={disk.id}>
                                         <Td dataLabel="Disk">{disk.id}</Td>
+                                        <Td dataLabel="Device">{disk.devicePath ?? ""}</Td>
                                         <Td dataLabel="Size">{formatBytes(disk.sizeBytes)}</Td>
                                         <Td dataLabel="Status">{diskStatus(disk, busy)}</Td>
                                         <Td dataLabel="Actions">

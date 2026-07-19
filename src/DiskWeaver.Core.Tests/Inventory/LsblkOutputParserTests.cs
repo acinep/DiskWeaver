@@ -143,6 +143,10 @@ public class LsblkOutputParserTests
         var sdb = Assert.Single(LsblkOutputParser.ParseDisks(json));
 
         Assert.False(sdb.IsBlank);
+        // lsblk alone can see a RAID/LVM signature exists but not whose it is -- "unknown" is the
+        // only honest answer here; DiskSignatureOwnership.Annotate (daemon-side) is what can
+        // upgrade this to "diskweaver"/"foreign" once it can check the live LVM tag.
+        Assert.Equal("unknown", sdb.RaidLvmSignatureOwner);
     }
 
     [Fact]
@@ -158,6 +162,44 @@ public class LsblkOutputParserTests
         var sdc = Assert.Single(LsblkOutputParser.ParseDisks(json));
 
         Assert.False(sdc.IsBlank);
+        // A plain filesystem is never a DiskWeaver artifact -- no live LVM lookup needed to know that.
+        Assert.Null(sdc.RaidLvmSignatureOwner);
+    }
+
+    [Fact]
+    public void DiskWithLvm2MemberSignatureOnAPartition_ReportsUnknownSignatureOwner()
+    {
+        // The signature can sit one level down (a partition holding the LVM PV directly, no RAID
+        // layer) rather than on the whole disk -- HasRaidOrLvmSignature must recurse into children.
+        const string json = """
+            {"blockdevices": [
+                {"name": "sdd", "size": "2000398934016", "type": "disk", "id-link": null,
+                 "fstype": null, "mountpoints": [null],
+                 "children": [{"name": "sdd1", "size": "2000397000000", "type": "part", "id-link": null,
+                               "fstype": "LVM2_member", "mountpoints": [null]}]}
+            ]}
+            """;
+
+        var sdd = Assert.Single(LsblkOutputParser.ParseDisks(json));
+
+        Assert.False(sdd.IsBlank);
+        Assert.Equal("unknown", sdd.RaidLvmSignatureOwner);
+    }
+
+    [Fact]
+    public void EveryDisk_HasKernelDevicePathRegardlessOfIdLink()
+    {
+        const string json = """
+            {"blockdevices": [
+                {"name": "sde", "size": "2000398934016", "type": "disk", "id-link": "ata-WDC_WD20_XYZ",
+                 "fstype": null, "mountpoints": [null]}
+            ]}
+            """;
+
+        var sde = Assert.Single(LsblkOutputParser.ParseDisks(json));
+
+        Assert.Equal("/dev/disk/by-id/ata-WDC_WD20_XYZ", sde.Id);
+        Assert.Equal("/dev/sde", sde.DevicePath);
     }
 
     [Fact]

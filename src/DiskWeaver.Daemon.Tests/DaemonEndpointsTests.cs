@@ -26,6 +26,37 @@ public class DaemonEndpointsTests : IClassFixture<DaemonWebApplicationFactory>
     }
 
     [Fact]
+    public async Task GetInventory_ResolvesAnUnknownRaidLvmSignatureAgainstLiveLvmState()
+    {
+        // End-to-end version of DiskSignatureOwnershipTests: a disk lsblk flagged as "unknown"
+        // (some RAID/LVM signature, owner not determinable from lsblk alone) should come back from
+        // GET /inventory resolved to "diskweaver", using the array membership + vgs/pvs plumbing
+        // wired up in Program.cs. Uses its own factory (like DaemonSafetyEndpointsTests) rather
+        // than the shared class fixture, since it mutates inventory/array-membership/command-runner
+        // state that other tests in this class don't expect.
+        using var factory = new DaemonWebApplicationFactory();
+        factory.Inventory.Disks =
+        [
+            new Disk("/dev/disk/by-id/fake-9", 2_000_000_000_000, IsBlank: false, DevicePath: "/dev/sdz", RaidLvmSignatureOwner: "unknown"),
+        ];
+        factory.Inventory.PartitionPaths = new Dictionary<string, IReadOnlyList<string>>
+        {
+            ["/dev/disk/by-id/fake-9"] = ["/dev/sdz1"],
+        };
+        factory.ArrayMembership.Membership = new Dictionary<string, string> { ["/dev/sdz1"] = "/dev/md127" };
+        factory.CommandRunner.Respond("vgs", ["--reportformat", "json", "-o", "vg_name,vg_tags"],
+            """{"report":[{"vg":[{"vg_name":"diskweaver-pool","vg_tags":["diskweaver-managed"]}]}]}""");
+        factory.CommandRunner.Respond("pvs", ["--reportformat", "json", "-o", "pv_name,vg_name"],
+            """{"report":[{"pv":[{"pv_name":"/dev/md127","vg_name":"diskweaver-pool"}]}]}""");
+        var client = factory.CreateClient();
+
+        var disks = await client.GetFromJsonAsync<List<Disk>>("/inventory");
+
+        var disk = Assert.Single(disks!);
+        Assert.Equal("diskweaver", disk.RaidLvmSignatureOwner);
+    }
+
+    [Fact]
     public async Task GetPools_ReturnsTheFakePoolState()
     {
         var pools = await _client.GetFromJsonAsync<List<ExistingPoolState>>("/pools");

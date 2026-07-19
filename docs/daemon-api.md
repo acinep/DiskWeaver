@@ -278,6 +278,17 @@ with `lsblk --json -b -o NAME,SIZE,TYPE,ID-LINK,FSTYPE,MOUNTPOINTS` (no
 `-d`) to fix it; `diskweaver testkit`'s generated setup script already
 captures this way.
 
+## Kernel device path: `Disk.DevicePath`
+
+`GET /inventory` also reports `devicePath`, e.g. `"/dev/sdb"` — always
+the trailing `/dev/{name}` form lsblk reports, even when `id` resolved
+to a `/dev/disk/by-id/...` path (the common case: most real disks have
+one). Kernel names aren't stable across reboots/replugs, so `id`
+remains the identity everything else (plans, wipe requests, pool
+membership) keys off of — `devicePath` is purely a display convenience
+in the Cockpit inventory table, for matching what a user sees here
+against `lsblk`/`dmesg`/a drive bay label elsewhere.
+
 ## Best-effort system-disk flag: `Disk.IsLikelySystemDisk`
 
 `GET /inventory` also reports `isLikelySystemDisk`: true if the disk or
@@ -292,6 +303,45 @@ signature), so this exists to give that refusal a clearer, scarier
 label in the Cockpit UI ("likely system/boot disk -- do not use") and
 to keep the `WipeButton` from ever being offered for it, rather than to
 add a new blocking mechanism.
+
+## Whose RAID/LVM signature: `Disk.RaidLvmSignatureOwner`
+
+`GET /inventory` also reports `raidLvmSignatureOwner`: `null` when the
+disk has no mdadm/LVM signature at all (a blank disk, or one with only
+a plain filesystem — never a DiskWeaver artifact, so no further check
+is needed), otherwise one of `"diskweaver"`, `"foreign"`, or
+`"unknown"`. This is what lets the Cockpit inventory table say *why* a
+non-blank disk isn't blank — leftover DiskWeaver pool metadata that was
+never wiped, versus some other system's RAID/LVM, versus "can't tell
+yet."
+
+Getting past lsblk's `linux_raid_member`/`LVM2_member` FSTYPE (which
+only proves *some* RAID/LVM signature exists) to a specific owner needs
+the LVM VG's `diskweaver-managed` tag (`DiskWeaverPoolTag`), and that
+tag is only readable while the array backing the VG's PV is actually
+assembled. So this is computed in two passes:
+
+1. `LsblkOutputParser` (pure, lsblk-only) sets `"unknown"` for any disk
+   with a signature — it has no way to shell out to `pvs`/`vgs`.
+2. `DiskSignatureOwnership.Annotate`, run by the `/inventory` handler
+   after fetching inventory, upgrades each `"unknown"` disk it can:
+   cross-references the disk's partitions against
+   `IArrayMembershipSource` (live `/proc/mdstat`, so only currently
+   *assembled* arrays show up) to find its array device, then checks
+   whether that array is a PV in a VG tagged `diskweaver-managed` via
+   `vgs`/`pvs`. Found and tagged → `"diskweaver"`; found and untagged
+   (or belongs to no VG) → `"foreign"`; array not currently assembled
+   at all → stays `"unknown"`, since DiskWeaver never persists its own
+   record of "used to be my pool" (see docs/state-model.md) — there is
+   no data to consult once the array is torn down. Reassembling it
+   (`POST /arrays/reassemble`) may resolve the "unknown" into a real
+   answer on the next `GET /inventory`.
+
+In practice a disk actively claimed by a live, tagged pool is already
+caught earlier by the Cockpit UI's own "already in `<pool>`" check
+(`poolNameByDiskId` in `DiskInventory.jsx`, sourced from `GET /pools`)
+before `raidLvmSignatureOwner` is even consulted — this field only
+matters for the disks that check doesn't cover.
 
 ## Transport decision: HTTP/JSON (Kestrel + Native AOT), not D-Bus
 

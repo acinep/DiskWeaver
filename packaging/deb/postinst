@@ -12,6 +12,13 @@ if [ "$1" = "configure" ]; then
     systemctl daemon-reload
     systemctl enable diskweaverd.service
     systemctl restart diskweaverd.service
+
+    # groupadd above only creates the group -- it can't know which login(s) will actually use
+    # Cockpit, so membership has to be granted explicitly, or every action in the UI fails with a
+    # "Permission denied" on the socket that gives no hint why (see docs/cockpit-plugin.md).
+    echo "diskweaver: add Cockpit users to the 'diskweaver' group to grant access, e.g.:"
+    echo "  sudo usermod -aG diskweaver <your-user>"
+    echo "  (then log out and back in to Cockpit for it to take effect)"
 fi
 
 exit 0

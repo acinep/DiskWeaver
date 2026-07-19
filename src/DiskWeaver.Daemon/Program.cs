@@ -13,7 +13,9 @@ using DiskWeaver.Planner;
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddSingleton<IDiskInventorySource, LsblkDiskInventorySource>();
 builder.Services.AddSingleton<IArrayMembershipSource, ProcMdstatArrayMembershipSource>();
-builder.Services.AddSingleton<IPoolStateSource>(_ => new MdadmLvmPoolStateSource());
+builder.Services.AddSingleton<ICommandRunner>(_ => new ProcessCommandRunner());
+builder.Services.AddSingleton<IPoolStateSource>(sp =>
+    new MdadmLvmPoolStateSource(diskInventory: sp.GetRequiredService<IDiskInventorySource>()));
 builder.Services.AddSingleton<PlanCache>();
 builder.Services.AddSingleton<ExecutionPlanCache>();
 builder.Services.AddSingleton<IStepRunner, ProcessStepRunner>();
@@ -154,11 +156,17 @@ app.MapGet("/auth/session", (HttpContext context) => context.User.Identity?.IsAu
     ? Results.Ok(new SessionResponse(context.User.Identity.Name!))
     : Results.StatusCode(StatusCodes.Status401Unauthorized));
 
-app.MapGet("/inventory", (IDiskInventorySource inventory) =>
+app.MapGet("/inventory", (IDiskInventorySource inventory, IArrayMembershipSource arrayMembership, ICommandRunner commandRunner) =>
 {
     try
     {
-        return Results.Ok(inventory.GetDisks());
+        var disks = inventory.GetDisks();
+        // Cross-references any disk lsblk flagged as carrying a RAID/LVM signature (but couldn't
+        // itself say whose) against live mdadm/LVM state, so the Cockpit UI can tell a leftover
+        // DiskWeaver pool disk apart from an unrelated foreign RAID/LVM disk. See
+        // Disk.RaidLvmSignatureOwner and DiskSignatureOwnership's doc comments.
+        var annotated = DiskSignatureOwnership.Annotate(disks, inventory.GetPartitionPaths(), arrayMembership, commandRunner);
+        return Results.Ok(annotated);
     }
     catch (InvalidOperationException ex)
     {

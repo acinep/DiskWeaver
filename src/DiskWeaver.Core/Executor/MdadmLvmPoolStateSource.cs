@@ -1,4 +1,5 @@
 using DiskWeaver.Core.Executor.Abstractions;
+using DiskWeaver.Core.Inventory.Abstractions;
 using DiskWeaver.Inventory;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
@@ -10,12 +11,29 @@ namespace DiskWeaver.Executor;
 /// PATH, so this only runs on Linux. DiskWeaver never persists its own copy of this state (see
 /// docs/state-model.md) -- it's rediscovered from mdadm/LVM every time it's needed.
 /// </summary>
-public sealed class MdadmLvmPoolStateSource(ICommandRunner? commandRunner = null) : IPoolStateSource
+public sealed class MdadmLvmPoolStateSource(ICommandRunner? commandRunner = null, IDiskInventorySource? diskInventory = null) : IPoolStateSource
 {
     private readonly ICommandRunner _runner = commandRunner ?? new ProcessCommandRunner();
+    private readonly IDiskInventorySource _diskInventory = diskInventory ?? new LsblkDiskInventorySource();
 
     public IReadOnlyList<ExistingPoolState> GetPools()
     {
+        // mdadm --detail --export always reports each member's *current kernel* device path (e.g.
+        // "/dev/sde1"), never the /dev/disk/by-id/... path DiskWeaver actually created the array
+        // with -- so PartitionNaming.ToDiskId(partitionPath) below only ever recovers a raw
+        // "/dev/sde"-style id, regardless of whether that disk has a stable by-id link. Meanwhile
+        // GetDisks() (LsblkDiskInventorySource) always prefers the by-id form when one exists. Left
+        // alone, a pool's own ExistingTier.DiskIds would then permanently disagree with inventory's
+        // Disk.Id for any disk with an id-link -- i.e. virtually every real disk, just not the loop
+        // devices this class's own tests use (which is exactly why this went uncaught until a real
+        // box hit it: DiskSelector.Select, fed a tier's raw "/dev/sde", can't find it among
+        // by-id-keyed inventory disks, and expand/protect/teardown-matching all fail with "No disk
+        // matching '/dev/sde'"). Disk.DevicePath (the same raw kernel path, carried alongside the
+        // by-id Id) is exactly the join key needed to canonicalize back to it below.
+        var diskIdByDevicePath = _diskInventory.GetDisks()
+            .Where(d => d.DevicePath is not null)
+            .ToDictionary(d => d.DevicePath!, d => d.Id);
+
         // Ownership is the tag, not the name: vgs/pvs happily report every VG/PV on the host, including
         // ones DiskWeaver never touched (manual mdadm+LVM layouts, other tools). Only a VG carrying
         // DiskWeaverPoolTag.Value -- applied by CommandPlanner.Build's vgcreate --addtag -- is treated
@@ -66,7 +84,7 @@ public sealed class MdadmLvmPoolStateSource(ICommandRunner? commandRunner = null
                 try
                 {
                     var syncStatus = syncStatusByArrayDevice.GetValueOrDefault(pv.PvName);
-                    tiers.Add(DescribeTier(pv.PvName, pv.HasTag("diskweaver-unprotected"), syncStatus));
+                    tiers.Add(DescribeTier(pv.PvName, pv.HasTag("diskweaver-unprotected"), syncStatus, diskIdByDevicePath));
                 }
                 catch (InvalidOperationException ex)
                 {
@@ -80,11 +98,17 @@ public sealed class MdadmLvmPoolStateSource(ICommandRunner? commandRunner = null
         return pools;
     }
 
-    private ExistingTier DescribeTier(string arrayDevice, bool isUnprotectedByDesign, ProcMdstatParser.MdstatSyncStatus? syncStatus)
+    private ExistingTier DescribeTier(
+        string arrayDevice, bool isUnprotectedByDesign, ProcMdstatParser.MdstatSyncStatus? syncStatus,
+        IReadOnlyDictionary<string, string> diskIdByDevicePath)
     {
         var export = _runner.Run("mdadm", ["--detail", "--export", arrayDevice]);
         var (raidLevel, partitionPaths, configuredMemberCount) = MdadmDetailParser.Parse(export);
-        var diskIds = partitionPaths.Select(PartitionNaming.ToDiskId).ToList();
+        // Falls back to the raw kernel id unchanged when inventory doesn't know about it (fakes/
+        // tests with no id-link, e.g. loop devices -- or a disk lsblk currently can't see at all,
+        // which shouldn't normally happen for an array member mdadm itself reports as present).
+        var diskIds = partitionPaths.Select(PartitionNaming.ToDiskId)
+            .Select(rawId => diskIdByDevicePath.GetValueOrDefault(rawId, rawId)).ToList();
 
         // ExistingTier.SegmentSizeBytes is the per-disk slice size (matching Tier.SegmentSizeBytes),
         // not the array's usable RAID capacity -- blockdev on the array device itself would return

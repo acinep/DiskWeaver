@@ -30,7 +30,7 @@ public class MdadmLvmPoolStateSourceTests
         runner.Respond("blockdev", ["--getsize64", "/dev/loop0p1"], "2145386496\n");
         runner.Respond("cat", ["/proc/mdstat"], "");
 
-        var source = new MdadmLvmPoolStateSource(runner);
+        var source = new MdadmLvmPoolStateSource(runner, new FakeDiskInventorySource());
         var pools = source.GetPools();
 
         var pool = Assert.Single(pools);
@@ -62,7 +62,7 @@ public class MdadmLvmPoolStateSourceTests
         runner.Respond("blockdev", ["--getsize64", "/dev/loop0p1"], "2145386496\n");
         runner.Respond("cat", ["/proc/mdstat"], "");
 
-        var source = new MdadmLvmPoolStateSource(runner);
+        var source = new MdadmLvmPoolStateSource(runner, new FakeDiskInventorySource());
         var pool = Assert.Single(source.GetPools());
         var tier = Assert.Single(pool.Tiers);
 
@@ -89,7 +89,7 @@ public class MdadmLvmPoolStateSourceTests
         runner.Respond("blockdev", ["--getsize64", "/dev/loop0p1"], "2145386496\n");
         runner.Respond("cat", ["/proc/mdstat"], "");
 
-        var source = new MdadmLvmPoolStateSource(runner);
+        var source = new MdadmLvmPoolStateSource(runner, new FakeDiskInventorySource());
         var pool = Assert.Single(source.GetPools());
         var tier = Assert.Single(pool.Tiers);
 
@@ -125,7 +125,7 @@ public class MdadmLvmPoolStateSourceTests
             unused devices: <none>
             """);
 
-        var source = new MdadmLvmPoolStateSource(runner);
+        var source = new MdadmLvmPoolStateSource(runner, new FakeDiskInventorySource());
         var tier = Assert.Single(Assert.Single(source.GetPools()).Tiers);
 
         Assert.Equal("recovery", tier.SyncOperation);
@@ -159,7 +159,7 @@ public class MdadmLvmPoolStateSourceTests
             unused devices: <none>
             """);
 
-        var source = new MdadmLvmPoolStateSource(runner);
+        var source = new MdadmLvmPoolStateSource(runner, new FakeDiskInventorySource());
         var tier = Assert.Single(Assert.Single(source.GetPools()).Tiers);
 
         Assert.Null(tier.SyncOperation);
@@ -175,7 +175,7 @@ public class MdadmLvmPoolStateSourceTests
         runner.Respond("lvs", ["--reportformat", "json", "-o", "vg_name,lv_name"], """{"report":[{"lv":[]}]}""");
         runner.Respond("cat", ["/proc/mdstat"], "");
 
-        var source = new MdadmLvmPoolStateSource(runner);
+        var source = new MdadmLvmPoolStateSource(runner, new FakeDiskInventorySource());
 
         Assert.Empty(source.GetPools());
     }
@@ -197,7 +197,7 @@ public class MdadmLvmPoolStateSourceTests
             """{"report":[{"lv":[{"vg_name":"diskweaver-pool","lv_name":"data"}]}]}""");
         runner.Respond("cat", ["/proc/mdstat"], "");
 
-        var source = new MdadmLvmPoolStateSource(runner);
+        var source = new MdadmLvmPoolStateSource(runner, new FakeDiskInventorySource());
         var pool = Assert.Single(source.GetPools());
 
         Assert.Equal("diskweaver-pool", pool.PoolName);
@@ -224,12 +224,57 @@ public class MdadmLvmPoolStateSourceTests
         runner.Respond("blockdev", ["--getsize64", "/dev/loop0p1"], "2145386496\n");
         runner.Respond("cat", ["/proc/mdstat"], "");
 
-        var source = new MdadmLvmPoolStateSource(runner);
+        var source = new MdadmLvmPoolStateSource(runner, new FakeDiskInventorySource());
         var pool = Assert.Single(source.GetPools());
 
         var tier = Assert.Single(pool.Tiers);
         Assert.Equal("/dev/md127", tier.ArrayDevice);
         Assert.NotNull(pool.Error);
+    }
+
+    [Fact]
+    public void MemberDiskHasAByIdLink_TierReportsTheByIdFormNotTheRawKernelPath()
+    {
+        // Regression test for a real bug found via the Cockpit expand wizard: mdadm --detail
+        // --export always reports a member's *current kernel* device path (e.g. "/dev/sde1"),
+        // never the /dev/disk/by-id/... path the array was actually created with. Left
+        // uncanonicalized, this tier would report DiskIds ["/dev/sde"] while GetDisks() (real
+        // hardware, via lsblk's ID-LINK column) reports that same physical disk as
+        // "/dev/disk/by-id/ata-WDC1" -- a mismatch that made DiskSelector.Select fail with "No
+        // disk matching '/dev/sde'" for any expand/protect/teardown-matching call, on every real
+        // disk with a stable id-link (i.e. virtually all of them -- just not the loop devices
+        // every other test here uses, which is why this went uncaught).
+        var runner = new FakeCommandRunner();
+        runner.Respond("vgs", ["--reportformat", "json", "-o", "vg_name,vg_tags"],
+            """{"report":[{"vg":[{"vg_name":"diskweaver-pool","vg_tags":["diskweaver-managed"]}]}]}""");
+        runner.Respond("pvs", ["--reportformat", "json", "-o", "pv_name,vg_name,pv_tags"],
+            """{"report":[{"pv":[{"pv_name":"/dev/md127","vg_name":"diskweaver-pool"}]}]}""");
+        runner.Respond("lvs", ["--reportformat", "json", "-o", "vg_name,lv_name"],
+            """{"report":[{"lv":[{"vg_name":"diskweaver-pool","lv_name":"data"}]}]}""");
+        runner.Respond("mdadm", ["--detail", "--export", "/dev/md127"], """
+            MD_LEVEL=raid1
+            MD_DEVICES=2
+            MD_DEVICE_dev_sde1_DEV=/dev/sde1
+            MD_DEVICE_dev_sde1_ROLE=0
+            MD_DEVICE_dev_sdf1_DEV=/dev/sdf1
+            MD_DEVICE_dev_sdf1_ROLE=1
+            """);
+        runner.Respond("blockdev", ["--getsize64", "/dev/sde1"], "2145386496\n");
+        runner.Respond("cat", ["/proc/mdstat"], "");
+
+        var diskInventory = new FakeDiskInventorySource
+        {
+            Disks =
+            [
+                new Disk("/dev/disk/by-id/ata-WDC1", 2_000_000_000_000, DevicePath: "/dev/sde"),
+                new Disk("/dev/disk/by-id/ata-WDC2", 2_000_000_000_000, DevicePath: "/dev/sdf"),
+            ],
+        };
+
+        var source = new MdadmLvmPoolStateSource(runner, diskInventory);
+        var tier = Assert.Single(Assert.Single(source.GetPools()).Tiers);
+
+        Assert.Equal(["/dev/disk/by-id/ata-WDC1", "/dev/disk/by-id/ata-WDC2"], tier.DiskIds);
     }
 
     [Fact]
@@ -247,7 +292,7 @@ public class MdadmLvmPoolStateSourceTests
             """{"report":[{"lv":[{"vg_name":"diskweaver-pool","lv_name":"data"}]}]}""");
         runner.Respond("cat", ["/proc/mdstat"], "");
 
-        var source = new MdadmLvmPoolStateSource(runner);
+        var source = new MdadmLvmPoolStateSource(runner, new FakeDiskInventorySource());
 
         Assert.Empty(source.GetPools());
     }

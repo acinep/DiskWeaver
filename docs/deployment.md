@@ -98,9 +98,19 @@ sudo apt install ./diskweaver_0.1.0_amd64.deb
 
 `postinst` creates the `diskweaver` group (needed for the Cockpit-bridge
 user to reach the daemon's socket -- see `packaging/diskweaverd.service`),
-then enables and (re)starts `diskweaverd.service`. A fresh Cockpit login is
-needed after the *first* install for new group membership to take effect,
-same caveat as the dev loop.
+then enables and (re)starts `diskweaverd.service`. It does *not* add anyone
+to that group -- there's no reliable way for `postinst` to know which
+login(s) will actually use Cockpit, so each admin user needs adding
+explicitly:
+
+```bash
+sudo usermod -aG diskweaver <your-user>
+```
+
+A fresh Cockpit login (log out and back in) is needed after group
+membership changes for it to take effect, same caveat as the dev loop.
+Skipping this step is the most common cause of every action in the UI
+failing with a "Permission denied" on the socket.
 
 Re-running `apt install ./diskweaver_<new-version>_amd64.deb` upgrades in
 place; `postinst` restarts the service on every configure, so the upgrade

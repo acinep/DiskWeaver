@@ -93,7 +93,14 @@ public static class LsblkOutputParser
             ? $"/dev/disk/by-id/{device.IdLink}"
             : $"/dev/{device.Name}";
 
-        return new Disk(id, sizeBytes, IsBlank(device), IsLikelySystemDisk(device));
+        // lsblk alone can see THAT a RAID/LVM signature exists (FSTYPE), but not WHOSE it is --
+        // that requires reading the LVM VG tag, which needs a live pvs/vgs lookup against an
+        // assembled array. So this only ever reports "unknown" here; DiskSignatureOwnership.Annotate
+        // (DiskWeaver.Core.Executor, run by the daemon) upgrades it to "diskweaver"/"foreign" when
+        // it can. See Disk.RaidLvmSignatureOwner's doc comment.
+        var raidLvmSignatureOwner = HasRaidOrLvmSignature(device) ? "unknown" : null;
+
+        return new Disk(id, sizeBytes, IsBlank(device), IsLikelySystemDisk(device), $"/dev/{device.Name}", raidLvmSignatureOwner);
     }
 
     /// <summary>
@@ -112,6 +119,18 @@ public static class LsblkOutputParser
 
     private static bool HasNonEmptyString(JsonElement element) =>
         element.ValueKind == JsonValueKind.String && element.GetString() is { Length: > 0 };
+
+    /// <summary>
+    /// True if this device or any partition/holder beneath it (recursively -- an mdadm array member
+    /// partition can itself hold an LVM PV signature, one level further down) carries an mdadm or
+    /// LVM signature. Doesn't distinguish DiskWeaver's own signature from a foreign one -- see
+    /// <see cref="Disk.RaidLvmSignatureOwner"/>.
+    /// </summary>
+    private static bool HasRaidOrLvmSignature(LsblkDevice device) =>
+        IsRaidOrLvmFsType(device.FsType) || (device.Children ?? []).Any(HasRaidOrLvmSignature);
+
+    private static bool IsRaidOrLvmFsType(JsonElement fsType) =>
+        fsType.ValueKind == JsonValueKind.String && fsType.GetString() is "linux_raid_member" or "LVM2_member";
 
     private static bool MountPointsAllEmpty(JsonElement mountPoints) => mountPoints.ValueKind switch
     {

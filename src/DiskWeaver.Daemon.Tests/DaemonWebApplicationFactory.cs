@@ -1,5 +1,6 @@
 using DiskWeaver.Core.Executor.Abstractions;
 using DiskWeaver.Core.Inventory.Abstractions;
+using DiskWeaver.Executor.Tests;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -19,6 +20,7 @@ public sealed class DaemonWebApplicationFactory : WebApplicationFactory<Program>
     public FakePoolStateSource PoolState { get; } = new();
     public FakeStepRunner StepRunner { get; } = new();
     public InMemoryJournalStore JournalStore { get; } = new();
+    public FakeCommandRunner CommandRunner { get; } = new();
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
@@ -34,6 +36,8 @@ public sealed class DaemonWebApplicationFactory : WebApplicationFactory<Program>
             services.AddSingleton<IStepRunner>(StepRunner);
             services.RemoveAll<IJournalStore>();
             services.AddSingleton<IJournalStore>(JournalStore);
+            services.RemoveAll<ICommandRunner>();
+            services.AddSingleton<ICommandRunner>(CommandRunner);
             services.AddSingleton<IStartupFilter, TrustedSocketStartupFilter>();
         });
     }
