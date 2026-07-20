@@ -50,8 +50,10 @@ order):
 3. Once every disk in the tier has its partition and a trailing
    `udevadm settle`: `mdadm --create /dev/md/diskweaver-tier<N>
    --level=<1|5|6> --raid-devices=<m> --metadata=1.2
-   --bitmap=internal <partitions...>`, then `pvcreate` on the
-   resulting array device.
+   --consistency-policy=ppl|--bitmap=internal <partitions...>`, then
+   `pvcreate` on the resulting array device. RAID5 tiers get
+   `--consistency-policy=ppl`; Mirror and RAID6 tiers get
+   `--bitmap=internal` (see below for why they differ).
 
 After all tiers: `vgcreate diskweaver-pool <all array devices>`, then
 `lvcreate -l 100%FREE -n data diskweaver-pool`.
@@ -71,13 +73,43 @@ array?" if any input partition still has an old RAID superblock on it
 array whose superblock was never zeroed) — non-TTY stdin makes mdadm
 default to "N" and abort rather than hang, but it's still a script
 stopping on a prompt it can never answer, so `--run` is given
-explicitly to proceed. `--bitmap=internal` is also the right call on
-its own merits, not just to silence the prompt: it lets an array
-resync only the regions that were being written after an unclean
-shutdown instead of the whole array, at the cost of a small, fixed
-amount of per-array reserved space (see algorithm.md's note on
-`PoolCapacityBytes` being a pre-overhead upper bound). `lvremove` and
+explicitly to proceed. Explicitly specifying one of `--bitmap` /
+`--consistency-policy` is also the right call on its own merits, not
+just to silence the prompt — see the ppl note below for why the choice
+between them isn't just "make it non-interactive." `lvremove` and
 `vgremove` both get `-f` for the same reason.
+
+**RAID5 gets ppl instead of a plain bitmap; Mirror and RAID6 don't.**
+A write-intent bitmap only narrows an unclean-shutdown resync to the
+regions that were dirty — it doesn't stop the RAID5 write hole itself:
+a stripe update torn by power loss can leave data and parity silently
+inconsistent, and a bitmap resync won't detect or fix that. `ppl`
+(Partial Parity Log, `--consistency-policy=ppl`) logs each stripe's
+pre-write parity, so recovery can correctly reconstruct exactly the
+stripes that were mid-write — a real correctness improvement, not just
+a faster resync. It's RAID5-only: the kernel md driver never
+implemented it for RAID6's dual P+Q parity (closing RAID6's write hole
+needs a dedicated write-intent journal device instead — a real,
+separate gap DiskWeaver's planner doesn't cover, since it has no
+concept of selecting a disk for that role today), and mirrors have no
+parity to protect in the first place, so both keep the plain bitmap.
+
+ppl and an internal bitmap are mutually exclusive on the same array,
+which matters for `BuildGrowSteps`' RAID-level migrations
+(`CommandPlanner.cs`'s `PlanLevelHops`): a Mirror always has the
+bitmap it was created with, and mdadm won't let ppl be enabled until
+the array is genuinely RAID5, so a Mirror → RAID5 hop keeps that
+bitmap through the reshape itself and only switches to ppl (`--grow
+--bitmap=none` then `--grow --consistency-policy=ppl`) once the
+reshape finishes. Going the other way, RAID6 has no ppl support at
+all, so a RAID5 (ppl) tier migrating up to RAID6 sheds ppl (`--grow
+--consistency-policy=bitmap`) *before* that reshape starts — there's
+no valid intermediate state where a RAID6 array runs with ppl active.
+A Mirror → RAID5 → RAID6 double hop (jumping straight to a RAID6
+target) never touches ppl at all in either direction: the bitmap
+present since Mirror creation just carries through both hops
+untouched, since the *final* level is RAID6, not the transient RAID5
+it passes through.
 
 **`parted` writing a partition table doesn't reliably make the kernel
 expose the new partition device node on its own** — especially

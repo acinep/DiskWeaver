@@ -63,18 +63,65 @@ public class CommandPlannerTests
     }
 
     [Fact]
-    public void MdadmCreate_AlwaysSpecifiesBitmapExplicitly_NeverPromptsInteractively()
+    public void MdadmCreate_AlwaysSpecifiesBitmapOrPplExplicitly_NeverPromptsInteractively()
     {
-        // mdadm --create prompts "enable write-intent bitmap?" unless --bitmap is given explicitly
-        // -- unanswered in a non-interactive script that hangs; answered wrong it corrupts whatever
-        // runs next (the same class of bug vgremove's confirmation prompt had). Must never be omitted.
+        // mdadm --create prompts "enable write-intent bitmap?" unless --bitmap (or an equivalent
+        // --consistency-policy) is given explicitly -- unanswered in a non-interactive script that
+        // hangs; answered wrong it corrupts whatever runs next (the same class of bug vgremove's
+        // confirmation prompt had). One of the two must never be omitted.
         var poolPlan = TieringPlanner.Plan(Disks(2, 2, 4, 4, 4), RedundancyLevel.Dwr1);
         var plan = CommandPlanner.Build(poolPlan);
 
         foreach (var mdadmCreate in plan.Steps.Where(s => s.Command == "mdadm" && s.Arguments.Contains("--create")))
         {
-            Assert.Contains("--bitmap=internal", mdadmCreate.Arguments);
+            Assert.True(
+                mdadmCreate.Arguments.Contains("--bitmap=internal") || mdadmCreate.Arguments.Contains("--consistency-policy=ppl"),
+                $"Expected --bitmap=internal or --consistency-policy=ppl in: {string.Join(' ', mdadmCreate.Arguments)}");
         }
+    }
+
+    [Fact]
+    public void MdadmCreate_Raid5Tier_UsesPplInsteadOfBitmap()
+    {
+        // ppl closes the RAID5 write hole (a stripe torn by an unclean shutdown leaving data and
+        // parity silently inconsistent) -- a plain bitmap only narrows the resync window, it
+        // doesn't prevent that corruption. RAID5-only: the kernel md driver has no ppl support for
+        // RAID6's dual P+Q parity, and mirrors have no parity to protect in the first place.
+        var poolPlan = TieringPlanner.Plan(Disks(2, 2, 4, 4, 4), RedundancyLevel.Dwr1);
+        var plan = CommandPlanner.Build(poolPlan);
+
+        var raid5Creates = plan.Steps.Where(s => s.Command == "mdadm" && s.Arguments.Contains("--create") && s.Arguments.Contains("--level=5")).ToList();
+        Assert.NotEmpty(raid5Creates);
+        foreach (var mdadmCreate in raid5Creates)
+        {
+            Assert.Contains("--consistency-policy=ppl", mdadmCreate.Arguments);
+            Assert.DoesNotContain("--bitmap=internal", mdadmCreate.Arguments);
+        }
+    }
+
+    [Fact]
+    public void MdadmCreate_MirrorTier_StillUsesBitmap_NotPpl()
+    {
+        var poolPlan = TieringPlanner.Plan(Disks(2, 2, 2), RedundancyLevel.Dwr2);
+        var plan = CommandPlanner.Build(poolPlan);
+
+        var mirrorCreate = Assert.Single(plan.Steps, s => s.Command == "mdadm" && s.Arguments.Contains("--create"));
+        Assert.Contains("--bitmap=internal", mirrorCreate.Arguments);
+        Assert.DoesNotContain("--consistency-policy=ppl", mirrorCreate.Arguments);
+    }
+
+    [Fact]
+    public void MdadmCreate_Raid6Tier_StillUsesBitmap_NotPpl()
+    {
+        // ppl has no RAID6 support in the kernel md driver (only RAID5's single-parity scheme is
+        // implemented) -- closing RAID6's write hole needs a dedicated journal device instead,
+        // which DiskWeaver's planner doesn't select today. RAID6 keeps the plain bitmap.
+        var poolPlan = TieringPlanner.Plan(Disks(2, 2, 2, 2), RedundancyLevel.Dwr2);
+        var plan = CommandPlanner.Build(poolPlan);
+
+        var raid6Create = Assert.Single(plan.Steps, s => s.Command == "mdadm" && s.Arguments.Contains("--create") && s.Arguments.Contains("--level=6"));
+        Assert.Contains("--bitmap=internal", raid6Create.Arguments);
+        Assert.DoesNotContain("--consistency-policy=ppl", raid6Create.Arguments);
     }
 
     [Fact]

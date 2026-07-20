@@ -280,6 +280,24 @@ public static class CommandPlanner
         }
         else
         {
+            // ppl (see BuildTierCreationSteps) is mutually exclusive with an internal bitmap, and
+            // mdadm only allows enabling it once an array is genuinely RAID5 -- a Mirror (which
+            // always has --bitmap=internal from creation) migrating up to RAID5 has to keep that
+            // bitmap through the level-change reshape itself, then switch to ppl afterward, once
+            // it's confirmed RAID5. Going the other way, RAID6 has no ppl support at all, so a
+            // RAID5 tier (already on ppl) migrating up to RAID6 has to shed ppl *before* that
+            // reshape starts -- there's no valid intermediate state where a RAID6 array runs with
+            // ppl still active. Existing is only ever RAID5 here (never RAID6 -- see
+            // PlanLevelHops's own doc comment on the reshape paths mdadm actually supports), so
+            // "migrating away from RAID5" always means "up to RAID6," never back down.
+            if (existing.RaidLevel == RaidLevel.Raid5 && desired.RaidLevel != RaidLevel.Raid5)
+            {
+                steps.Add(new ExecutionStep(
+                    $"Switch {existing.ArrayDevice} off ppl (RAID6 doesn't support it) before migrating level",
+                    "mdadm",
+                    ["--grow", "--consistency-policy=bitmap", existing.ArrayDevice]));
+            }
+
             var fromLevel = existing.RaidLevel;
             for (var hopIndex = 0; hopIndex < levelHops.Count; hopIndex++)
             {
@@ -306,6 +324,22 @@ public static class CommandPlanner
                 steps.Add(WaitForReshapeStep(existing.ArrayDevice));
 
                 fromLevel = toLevel;
+            }
+
+            if (desired.RaidLevel == RaidLevel.Raid5)
+            {
+                // Only reachable here via a Mirror -> RAID5 hop -- a same-level RAID5 device-count
+                // grow never has any level hops at all (levelHops.Count would be 0, handled by the
+                // branch above), so the array still carries the internal bitmap every Mirror tier
+                // is created with; ppl requires that gone first.
+                steps.Add(new ExecutionStep(
+                    $"Remove {existing.ArrayDevice}'s bitmap so ppl can be enabled",
+                    "mdadm",
+                    ["--grow", "--bitmap=none", existing.ArrayDevice]));
+                steps.Add(new ExecutionStep(
+                    $"Enable ppl on {existing.ArrayDevice} to close the RAID5 write hole",
+                    "mdadm",
+                    ["--grow", "--consistency-policy=ppl", existing.ArrayDevice]));
             }
         }
 
@@ -819,10 +853,18 @@ public static class CommandPlanner
                 // Explicit, not left to mdadm's interactive "enable write-intent bitmap?" prompt --
                 // that prompt is a script-safety hazard (unanswered it hangs; answered wrong it
                 // corrupts whatever runs next, same class of bug as vgremove's confirmation prompt).
-                // Enabling it is also the right call on its own merits: on an unclean shutdown, a
-                // multi-TB array only needs to resync the regions that were being written, not the
-                // whole array, at the cost of a small, fixed amount of reserved space per array.
-                "--bitmap=internal",
+                //
+                // RAID5 gets ppl (Partial Parity Log) instead of a plain bitmap: unlike a bitmap
+                // (which only narrows an unclean-shutdown resync to the regions that were dirty),
+                // ppl logs each stripe's pre-write parity, so it actually closes the RAID5 write
+                // hole (a stripe torn by power loss leaving data and parity silently inconsistent)
+                // rather than just speeding up recovery from one. Mirror and RAID6 keep the plain
+                // bitmap: ppl is a RAID5-only mdadm feature (no RAID1 use case for it -- mirrors
+                // have no parity to protect -- and the kernel md driver has never implemented it
+                // for RAID6's dual P+Q parity). Closing RAID6's write hole needs a dedicated
+                // write-intent journal device instead, which DiskWeaver's planner has no concept
+                // of selecting today -- a real, separate gap, not something this covers.
+                tier.RaidLevel == RaidLevel.Raid5 ? "--consistency-policy=ppl" : "--bitmap=internal",
                 // A different interactive prompt than the bitmap one above: mdadm --create asks
                 // "appears to be part of a raid array... Continue creating array?" if any input
                 // partition still has an old RAID superblock on it (e.g. a partition number/offset

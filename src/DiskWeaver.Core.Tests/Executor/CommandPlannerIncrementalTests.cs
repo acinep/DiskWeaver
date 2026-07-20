@@ -297,6 +297,79 @@ public class CommandPlannerIncrementalTests
     }
 
     [Fact]
+    public void MigratingMirrorToRaid5_EnablesPplAfterTheReshapeCompletes()
+    {
+        // The array still carries the internal bitmap it was created with as a Mirror throughout
+        // the level-change reshape itself -- ppl can't be enabled until mdadm confirms the array
+        // is genuinely RAID5, so bitmap removal + ppl enable must come strictly after the grow+wait,
+        // not before or interleaved with it.
+        var existing = new ExistingPoolState(
+            "diskweaver-pool",
+            "data",
+            [new ExistingTier("/dev/md127", 2 * Tb, ["/dev/disk/by-id/d0", "/dev/disk/by-id/d1"], RaidLevel.Mirror,
+                PartitionPaths("/dev/disk/by-id/d0", "/dev/disk/by-id/d1"))]);
+
+        var desired = TieringPlanner.Plan([Disk("d0", 2), Disk("d1", 2), Disk("d2", 2)], RedundancyLevel.Dwr1);
+
+        var plan = CommandPlanner.BuildIncremental(existing, desired);
+
+        var growIndex = plan.Steps.ToList().FindIndex(s => s.Command == "mdadm" && s.Arguments.Contains("--grow") && s.Arguments.Contains("--level=5"));
+        var waitIndex = plan.Steps.ToList().FindIndex(s => s.Command == "mdadm" && s.Arguments.SequenceEqual(new[] { "--wait", "/dev/md127" }));
+        var bitmapNoneIndex = plan.Steps.ToList().FindIndex(s => s.Command == "mdadm" && s.Arguments.SequenceEqual(new[] { "--grow", "--bitmap=none", "/dev/md127" }));
+        var pplIndex = plan.Steps.ToList().FindIndex(s => s.Command == "mdadm" && s.Arguments.SequenceEqual(new[] { "--grow", "--consistency-policy=ppl", "/dev/md127" }));
+
+        Assert.True(growIndex >= 0 && waitIndex >= 0 && bitmapNoneIndex >= 0 && pplIndex >= 0);
+        Assert.True(growIndex < waitIndex, "the level-change grow must come before its wait");
+        Assert.True(waitIndex < bitmapNoneIndex, "ppl can't be touched until the reshape into RAID5 finishes");
+        Assert.True(bitmapNoneIndex < pplIndex, "the bitmap must be removed before ppl is enabled");
+    }
+
+    [Fact]
+    public void MigratingRaid5ToRaid6_SwitchesOffPplBeforeTheReshapeStarts()
+    {
+        // RAID6 has no ppl support at all -- there's no valid intermediate state where a RAID6
+        // array runs with ppl still active, so the switch back to a plain bitmap must happen
+        // *before* the level-change grow, not after.
+        var existing = new ExistingPoolState(
+            "diskweaver-pool",
+            "data",
+            [new ExistingTier("/dev/md127", 2 * Tb, ["/dev/disk/by-id/d0", "/dev/disk/by-id/d1", "/dev/disk/by-id/d2"], RaidLevel.Raid5,
+                PartitionPaths("/dev/disk/by-id/d0", "/dev/disk/by-id/d1", "/dev/disk/by-id/d2"))]);
+
+        var desired = new Tier(2 * Tb, ["/dev/disk/by-id/d0", "/dev/disk/by-id/d1", "/dev/disk/by-id/d2", "/dev/disk/by-id/d3"], RaidLevel.Raid6, 2 * 2 * Tb);
+        var plan = CommandPlanner.BuildIncremental(existing, new PoolPlan([desired], []));
+
+        var bitmapSwitchIndex = plan.Steps.ToList().FindIndex(s => s.Command == "mdadm" && s.Arguments.SequenceEqual(new[] { "--grow", "--consistency-policy=bitmap", "/dev/md127" }));
+        var growIndex = plan.Steps.ToList().FindIndex(s => s.Command == "mdadm" && s.Arguments.Contains("--grow") && s.Arguments.Contains("--level=6"));
+
+        Assert.True(bitmapSwitchIndex >= 0 && growIndex >= 0);
+        Assert.True(bitmapSwitchIndex < growIndex, "ppl must be switched off before migrating into RAID6, not after");
+
+        // No ppl-enable step anywhere -- the final level is RAID6, which never uses ppl.
+        Assert.DoesNotContain(plan.Steps, s => s.Command == "mdadm" && s.Arguments.Contains("--consistency-policy=ppl"));
+    }
+
+    [Fact]
+    public void MigratingMirrorToRaid6ViaRaid5Hop_NeverTouchesConsistencyPolicy()
+    {
+        // The transient intermediate RAID5 state in a Mirror -> RAID5 -> RAID6 double hop should
+        // never have ppl enabled just to immediately disable it again for the RAID6 hop that
+        // follows -- the array's bitmap (present since Mirror creation) carries through both hops
+        // untouched, since the *final* level is RAID6, not RAID5.
+        var existing = new ExistingPoolState(
+            "diskweaver-pool",
+            "data",
+            [new ExistingTier("/dev/md127", 2 * Tb, ["/dev/disk/by-id/d0", "/dev/disk/by-id/d1"], RaidLevel.Mirror,
+                PartitionPaths("/dev/disk/by-id/d0", "/dev/disk/by-id/d1"))]);
+
+        var desired = new Tier(2 * Tb, ["/dev/disk/by-id/d0", "/dev/disk/by-id/d1", "/dev/disk/by-id/d2", "/dev/disk/by-id/d3"], RaidLevel.Raid6, 2 * 2 * Tb);
+        var plan = CommandPlanner.BuildIncremental(existing, new PoolPlan([desired], []));
+
+        Assert.DoesNotContain(plan.Steps, s => s.Command == "mdadm" && s.Arguments.Any(a => a.StartsWith("--consistency-policy", StringComparison.Ordinal)));
+        Assert.DoesNotContain(plan.Steps, s => s.Command == "mdadm" && s.Arguments.Contains("--bitmap=none"));
+    }
+
+    [Fact]
     public void AddingDisksToA3DiskMirror_NeedingRaid6_ThrowsInsteadOfEmittingAnImpossibleReshape()
     {
         // Reproduces a real failure: an DWR-2 pool's minimum-redundancy tier is a 3-disk mirror
