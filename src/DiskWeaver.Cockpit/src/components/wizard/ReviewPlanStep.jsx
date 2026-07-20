@@ -9,7 +9,10 @@ import { apiRequest } from "../../api.js";
 // (see CreateExpandWizard's showDiagram) rather than this step opening a second nested <Modal> --
 // PatternFly's focus trap only expects one active Modal at a time (see confirmingExecute's own
 // comment in CreateExpandWizard for the same reasoning).
-export function ReviewPlanStep({ plan, achievedCapacityBytes, hypotheticalRebuildCapacityBytes, expansionPoolName, poolName, planId, onVisualize }) {
+export function ReviewPlanStep({
+    plan, achievedCapacityBytes, hypotheticalRebuildCapacityBytes, expansionPoolName, poolName, planId,
+    thinProvisioned, onVisualize,
+}) {
     const [scriptText, setScriptText] = useState(null);
     const [scriptError, setScriptError] = useState(null);
 
@@ -57,6 +60,9 @@ export function ReviewPlanStep({ plan, achievedCapacityBytes, hypotheticalRebuil
                     <strong>Full end-state usable capacity:</strong> {formatBytes(plan.poolCapacityBytes)}
                     {plan.reservedBytes > 0 && ` (${formatBytes(plan.reservedBytes)} unallocated until a matching disk is added)`}
                 </p>
+                {thinProvisioned && (
+                    <p>Thin-provisioned: a thin pool with 10% headroom, plus one "data" volume using its full capacity.</p>
+                )}
                 {rebuildIsBetter && (
                     <p>
                         Tearing down and rebuilding this pool from scratch with all its disks (existing

@@ -230,7 +230,7 @@ app.MapPost("/plan", (PlanRequest request, IDiskInventorySource inventory, IPool
         return TextError(StatusCodes.Status400BadRequest, ex.Message);
     }
 
-    var id = cache.Store(selectedDisks, redundancy, poolName, plan);
+    var id = cache.Store(selectedDisks, redundancy, poolName, plan, request.ThinProvisioned);
     return Results.Ok(new PlanResponse(id, plan));
 });
 
@@ -241,9 +241,10 @@ app.MapGet("/plan/{id}/script", (string id, string? kind, PlanCache cache) =>
         return Results.NotFound();
     }
 
+    cache.TryGetThinProvisioned(id, out var thinProvisioned);
     var executionPlan = string.Equals(kind, "teardown", StringComparison.OrdinalIgnoreCase)
-        ? CommandPlanner.BuildTeardown(plan, poolName!)
-        : CommandPlanner.Build(plan, poolName!);
+        ? CommandPlanner.BuildTeardown(plan, poolName!, thinProvisioned: thinProvisioned)
+        : CommandPlanner.Build(plan, poolName!, thinProvisioned: thinProvisioned);
 
     return Results.Text(ShellScriptEmitter.Render(executionPlan), "text/plain");
 });
@@ -284,7 +285,10 @@ app.MapPost("/plan/{id}/execute", (
         return TextError(StatusCodes.Status409Conflict, conflict);
     }
 
-    var executionPlan = normalizedKind == "teardown" ? CommandPlanner.BuildTeardown(plan, poolName!) : CommandPlanner.Build(plan, poolName!);
+    cache.TryGetThinProvisioned(id, out var thinProvisioned);
+    var executionPlan = normalizedKind == "teardown"
+        ? CommandPlanner.BuildTeardown(plan, poolName!, thinProvisioned: thinProvisioned)
+        : CommandPlanner.Build(plan, poolName!, thinProvisioned: thinProvisioned);
 
     ExecutionJournal? journal = null;
     do

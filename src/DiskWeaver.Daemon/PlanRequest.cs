@@ -10,4 +10,10 @@ namespace DiskWeaver.Daemon;
 /// per pool is what lets more than one pool coexist on one host without an mdadm/LVM naming
 /// collision; see execution.md's "Multiple pools on one host".
 /// </param>
-public sealed record PlanRequest(string[] DiskIds, string Redundancy, string? PoolName = null);
+/// <param name="ThinProvisioned">
+/// When true, the pool's volume group gets a thin pool (with headroom reserved, see
+/// <see cref="Executor.CommandPlanner.ThinPoolHeadroomPercent"/>) plus one thin volume named
+/// <c>data</c> sized to the thin pool's full capacity, instead of the default single thick LV --
+/// see execution.md's "Multiple logical volumes (thin pools)" for what this does and doesn't cover.
+/// </param>
+public sealed record PlanRequest(string[] DiskIds, string Redundancy, string? PoolName = null, bool ThinProvisioned = false);

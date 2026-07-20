@@ -33,8 +33,16 @@ already built over HTTP.
   partition paths are mapped back to disk ids via `PartitionNaming.
   ToDiskId` — the exact inverse of the naming `CommandPlanner` uses when
   building the array in the first place.
-- `POST /plan` → body: `{ diskIds: [...], redundancy: "none"|"dwr1"|"dwr2" }`
-  (optionally `{ existingPool: ... }` for the incremental path) →
+- `POST /plan` → body: `{ diskIds: [...], redundancy: "none"|"dwr1"|"dwr2",
+  poolName?, thinProvisioned? }` (optionally `{ existingPool: ... }` for
+  the incremental path) → `thinProvisioned` (default `false`) makes the
+  eventual `Build`/`BuildTeardown` create a thin pool (with headroom, see
+  `CommandPlanner.ThinPoolHeadroomPercent`) plus one thin `data` volume
+  instead of the default single thick LV — see execution.md's "Multiple
+  logical volumes (thin pools)". `PlanCache` stores it alongside the plan
+  itself, keyed into the plan id, so `/plan/{id}/script` and
+  `/plan/{id}/execute` build exactly the layout this request described.
+  →
   returns a `PoolPlan` plus a **plan id** (see below). `"none"` builds
   each disk as its own independent, unprotected tier — a degraded 2-slot
   RAID1 (`--raid-devices=2 <partition> missing`, PV-tagged

@@ -331,6 +331,38 @@ public class DaemonEndpointsTests : IClassFixture<DaemonWebApplicationFactory>
     }
 
     [Fact]
+    public async Task GetPlanScript_ThinProvisioned_ReturnsThinPoolCommands_NotTheDefaultThickLv()
+    {
+        var planResponse = await _client.PostAsJsonAsync(
+            "/plan", new PlanRequest(["fake-0", "fake-1"], "dwr1", "test-new-pool", ThinProvisioned: true));
+        var plan = await planResponse.Content.ReadFromJsonAsync<PlanResponse>();
+
+        var script = await _client.GetStringAsync($"/plan/{plan!.Id}/script");
+
+        Assert.Contains("thin-pool", script);
+        Assert.Contains("100%POOL", script);
+        Assert.DoesNotContain("100%FREE -n data", script);
+    }
+
+    [Fact]
+    public async Task SameDisksAndPoolName_DifferentThinProvisioned_ProduceDifferentPlanIds()
+    {
+        // ThinProvisioned changes what /plan/{id}/script and /plan/{id}/execute actually build --
+        // if it weren't part of the cache key, requesting a thin plan then a thick plan for the
+        // same disks/pool name would collide on the same id and silently reuse whichever was
+        // cached first.
+        var thick = await _client.PostAsJsonAsync(
+            "/plan", new PlanRequest(["fake-0", "fake-1"], "dwr1", "test-new-pool", ThinProvisioned: false));
+        var thin = await _client.PostAsJsonAsync(
+            "/plan", new PlanRequest(["fake-0", "fake-1"], "dwr1", "test-new-pool", ThinProvisioned: true));
+
+        var thickBody = await thick.Content.ReadFromJsonAsync<PlanResponse>();
+        var thinBody = await thin.Content.ReadFromJsonAsync<PlanResponse>();
+
+        Assert.NotEqual(thickBody!.Id, thinBody!.Id);
+    }
+
+    [Fact]
     public async Task GetPlanScript_Teardown_ReturnsTeardownScript()
     {
         var planResponse = await _client.PostAsJsonAsync(

@@ -1,11 +1,13 @@
 import React from "react";
-import { Form, FormGroup, TextInput, FormSelect, FormSelectOption } from "@patternfly/react-core";
+import { Form, FormGroup, TextInput, FormSelect, FormSelectOption, Checkbox } from "@patternfly/react-core";
 
 // Redundancy and pool name are only chosen when creating a new pool -- expanding
 // an existing one always targets that pool's own (inferred) redundancy level and
 // its existing name, per daemon-api.md. This step is skipped entirely by
 // CreateExpandWizard when expanding.
-export function ConfigureStep({ poolName, onPoolNameChange, redundancy, onRedundancyChange, diskCount }) {
+export function ConfigureStep({
+    poolName, onPoolNameChange, redundancy, onRedundancyChange, diskCount, thinProvisioned, onThinProvisionedChange,
+}) {
     // DWR-2 tolerates 2 disk failures, which needs a disk on top of the 2 that
     // hold the parity itself -- selecting it with 2 or fewer disks would just
     // fail once the wizard tries to plan/build.
@@ -33,6 +35,20 @@ export function ConfigureStep({ poolName, onPoolNameChange, redundancy, onRedund
                         isDisabled={dwr2Disabled}
                     />
                 </FormSelect>
+            </FormGroup>
+            <FormGroup fieldId="thin-provisioned">
+                <Checkbox
+                    id="thin-provisioned"
+                    label="Thin-provision this pool"
+                    description={
+                        "Creates a thin pool (with 10% headroom reserved) plus one \"data\" volume "
+                        + "using its full capacity, instead of one plain volume using 100% of the pool. "
+                        + "Lets you carve out further thin volumes yourself later (e.g. for iSCSI LUNs) "
+                        + "-- see docs/execution.md's \"Multiple logical volumes (thin pools)\"."
+                    }
+                    isChecked={thinProvisioned}
+                    onChange={(_event, checked) => onThinProvisionedChange(checked)}
+                />
             </FormGroup>
         </Form>
     );

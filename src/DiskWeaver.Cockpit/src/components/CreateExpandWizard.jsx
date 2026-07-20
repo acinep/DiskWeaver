@@ -19,6 +19,7 @@ export function CreateExpandWizard({ pools, disks, expansionPoolName, onClose })
     const [selectedDiskIds, setSelectedDiskIds] = useState(new Set());
     const [poolName, setPoolName] = useState("diskweaver-pool");
     const [redundancy, setRedundancy] = useState("dwr1");
+    const [thinProvisioned, setThinProvisioned] = useState(false);
     // Expand-only: the daemon's up-to-two candidate plans (protection/space) for the picked
     // disk(s) -- see ExpansionOptionsStep and daemon-api.md's POST /pools/{poolName}/expand.
     const [options, setOptions] = useState([]);
@@ -58,7 +59,7 @@ export function CreateExpandWizard({ pools, disks, expansionPoolName, onClose })
                     setSelectedOptionId(response.options[0]?.planId ?? null);
                     setHypotheticalRebuildCapacityBytes(response.hypotheticalRebuildCapacityBytes);
                 })
-            : apiPostJson("/plan", { diskIds, redundancy, poolName: poolName.trim() || undefined })
+            : apiPostJson("/plan", { diskIds, redundancy, poolName: poolName.trim() || undefined, thinProvisioned })
                 .then(response => {
                     setPlanId(response.id);
                     setPlan(response.plan);
@@ -183,6 +184,8 @@ export function CreateExpandWizard({ pools, disks, expansionPoolName, onClose })
                         redundancy={redundancy}
                         onRedundancyChange={setRedundancy}
                         diskCount={selectedDiskIds.size}
+                        thinProvisioned={thinProvisioned}
+                        onThinProvisionedChange={setThinProvisioned}
                     />
                 )}
                 {!confirmingExecute && step === STEP_OPTIONS && (
@@ -200,6 +203,7 @@ export function CreateExpandWizard({ pools, disks, expansionPoolName, onClose })
                         expansionPoolName={expansionPoolName}
                         poolName={poolName}
                         planId={planId}
+                        thinProvisioned={!isExpand && thinProvisioned}
                         onVisualize={() => setShowDiagram(true)}
                     />
                 )}
