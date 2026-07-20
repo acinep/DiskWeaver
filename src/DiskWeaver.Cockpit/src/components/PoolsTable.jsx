@@ -126,7 +126,7 @@ export function PoolsTable({ pools, disks, loading, onRefresh, onDataChanged, on
                                     <Tr key={pool.poolName}>
                                         <Td dataLabel="Pool">{pool.poolName}</Td>
                                         <Td dataLabel="Type">{poolType(pool)}</Td>
-                                        <Td dataLabel="Volume">{pool.volumeName}</Td>
+                                        <Td dataLabel="Volume">{(pool.volumeNames || []).join(', ')}</Td>
                                         <Td dataLabel="Size">{formatBytes(totalUsableBytes(pool))}</Td>
                                         <Td dataLabel="Tiers">{tiersSummary(pool, disks, pools, onProtectDone)}</Td>
                                         <Td dataLabel="Disks">{poolDisks(pool)}</Td>

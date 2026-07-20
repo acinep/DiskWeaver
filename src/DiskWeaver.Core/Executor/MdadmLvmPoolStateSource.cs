@@ -45,12 +45,19 @@ public sealed class MdadmLvmPoolStateSource(ICommandRunner? commandRunner = null
         var pvs = RunJson("pvs", ["--reportformat", "json", "-o", "pv_name,vg_name,pv_tags"], ExecutorJsonContext.Default.PvsDocument)
             .Report.SelectMany(r => r.Pv).Where(pv => pv.VgName.Length > 0 && ownedVgNames.Contains(pv.VgName)).ToList();
 
-        var lvs = RunJson("lvs", ["--reportformat", "json", "-o", "vg_name,lv_name"], ExecutorJsonContext.Default.LvsDocument)
+        var lvs = RunJson("lvs", ["--reportformat", "json", "-o", "vg_name,lv_name,pool_lv"], ExecutorJsonContext.Default.LvsDocument)
             .Report.SelectMany(r => r.Lv).ToList();
 
-        var volumeNameByVg = lvs
+        // Thin volumes (non-empty PoolLv) before the thin pool/thick LV they depend on -- the order
+        // BuildTeardownFromExisting's lvremove calls need. A freshly-built DiskWeaver pool has just
+        // one plain "data" LV here; a pool since converted to a thin pool with volumes on top (not
+        // something DiskWeaver creates itself, but real disk state it must still be able to read and
+        // tear down) reports every one of them.
+        var volumeNamesByVg = lvs
             .GroupBy(l => l.VgName)
-            .ToDictionary(g => g.Key, g => g.First().LvName);
+            .ToDictionary(
+                g => g.Key,
+                g => (IReadOnlyList<string>)g.OrderBy(l => l.PoolLv.Length == 0).Select(l => l.LvName).ToList());
 
         // Read once and shared across every tier below, rather than one call per array -- /proc/mdstat
         // already covers the whole host in one shot. Only arrays currently mid recovery/resync/reshape/
@@ -61,7 +68,7 @@ public sealed class MdadmLvmPoolStateSource(ICommandRunner? commandRunner = null
 
         foreach (var vgGroup in pvs.GroupBy(pv => pv.VgName))
         {
-            var volumeName = volumeNameByVg.GetValueOrDefault(vgGroup.Key, "data");
+            var volumeNames = volumeNamesByVg.GetValueOrDefault(vgGroup.Key, ["data"]);
             var tiers = new List<ExistingTier>();
             string? error = null;
 
@@ -92,7 +99,7 @@ public sealed class MdadmLvmPoolStateSource(ICommandRunner? commandRunner = null
                 }
             }
 
-            pools.Add(new ExistingPoolState(vgGroup.Key, volumeName, tiers, error));
+            pools.Add(new ExistingPoolState(vgGroup.Key, volumeNames, tiers, error));
         }
 
         return pools;

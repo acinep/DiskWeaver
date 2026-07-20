@@ -100,7 +100,7 @@ public class DaemonSafetyEndpointsTests
         var plan = body!.Options.Single(o => o.Intent == ExpansionOptionsPlanner.SpaceIntent);
 
         var originalPool = factory.PoolState.Pools[0];
-        factory.PoolState.Pools = [originalPool with { VolumeName = "renamed-data" }];
+        factory.PoolState.Pools = [originalPool with { VolumeNames = ["renamed-data"] }];
 
         var response = await client.PostAsync($"/pools/diskweaver-pool/expand/{plan.PlanId}/execute", content: null);
 
@@ -121,7 +121,7 @@ public class DaemonSafetyEndpointsTests
         // already has) makes a rebuilt pool get a distinct id instead.
         using var factory = new DaemonWebApplicationFactory();
         var firstPool = new ExistingPoolState(
-            "diskweaver-pool", "data",
+            "diskweaver-pool", ["data"],
             [new ExistingTier("/dev/md127", 2_000_000_000_000, ["/dev/fake-0", "/dev/fake-1"], RaidLevel.Mirror,
                 ["/dev/fake-0-part1", "/dev/fake-1-part1"])]);
         factory.PoolState.Pools = [firstPool];
@@ -132,7 +132,7 @@ public class DaemonSafetyEndpointsTests
         Assert.Contains(factory.StepRunner.Invocations, s => s.Arguments.Contains("/dev/md127"));
 
         var rebuiltPool = new ExistingPoolState(
-            "diskweaver-pool", "data",
+            "diskweaver-pool", ["data"],
             [new ExistingTier("/dev/md126", 4_000_000_000_000, ["/dev/fake-2", "/dev/fake-3", "/dev/fake-4"], RaidLevel.Raid5,
                 ["/dev/fake-2-part1", "/dev/fake-3-part1", "/dev/fake-4-part1"])]);
         factory.PoolState.Pools = [rebuiltPool];
@@ -165,7 +165,7 @@ public class DaemonSafetyEndpointsTests
 
         factory.PoolState.Pools =
         [
-            new ExistingPoolState("test-new-pool", "data",
+            new ExistingPoolState("test-new-pool", ["data"],
                 [new ExistingTier("/dev/md/test-new-pool-tier0", 2_000_000_000_000,
                     ["/dev/disk/by-id/fake-0", "/dev/disk/by-id/fake-1"], RaidLevel.Mirror,
                     ["/dev/disk/by-id/fake-0-part1", "/dev/disk/by-id/fake-1-part1"])]),
@@ -262,7 +262,7 @@ public class DaemonSafetyEndpointsTests
         // actually fixes.
         using var factory = new DaemonWebApplicationFactory();
         var pool = new ExistingPoolState(
-            "diskweaver-pool", "data",
+            "diskweaver-pool", ["data"],
             [new ExistingTier("/dev/md127", 2_000_000_000_000, ["/dev/fake-0", "/dev/fake-1"], RaidLevel.Mirror,
                 ["/dev/fake-0-part1", "/dev/fake-1-part1"])]);
         factory.PoolState.Pools = [pool];
@@ -302,7 +302,7 @@ public class DaemonSafetyEndpointsTests
         var firstPlan = firstBody!.Options.Single(o => o.Intent == ExpansionOptionsPlanner.SpaceIntent);
 
         var originalPool = factory.PoolState.Pools[0];
-        factory.PoolState.Pools = [originalPool with { VolumeName = "renamed-data" }];
+        factory.PoolState.Pools = [originalPool with { VolumeNames = ["renamed-data"] }];
 
         var secondResponse = await client.PostAsJsonAsync(
             "/pools/diskweaver-pool/expand", new ExpansionRequest(["fake-2"]));
@@ -338,7 +338,7 @@ public class DaemonSafetyEndpointsTests
         using var factory = new DaemonWebApplicationFactory();
         factory.PoolState.Pools =
         [
-            new ExistingPoolState("diskweaver-pool", "data",
+            new ExistingPoolState("diskweaver-pool", ["data"],
             [
                 new ExistingTier("/dev/md127", AdjustedSegmentBytes(2_000_000_000_000), ["/dev/disk/by-id/fake-0"], RaidLevel.Mirror,
                     ["/dev/disk/by-id/fake-0-part1"], ConfiguredMemberCount: 2, IsUnprotectedByDesign: true),
@@ -394,7 +394,7 @@ public class DaemonSafetyEndpointsTests
         using var factory = new DaemonWebApplicationFactory();
         factory.PoolState.Pools =
         [
-            new ExistingPoolState("diskweaver-pool", "data",
+            new ExistingPoolState("diskweaver-pool", ["data"],
             [
                 new ExistingTier("/dev/md127", AdjustedSegmentBytes(2_000_000_000_000), ["/dev/disk/by-id/fake-0"], RaidLevel.Mirror,
                     ["/dev/disk/by-id/fake-0-part1"], ConfiguredMemberCount: 2, IsUnprotectedByDesign: true),
@@ -433,7 +433,7 @@ public class DaemonSafetyEndpointsTests
         using var factory = new DaemonWebApplicationFactory();
         factory.PoolState.Pools =
         [
-            new ExistingPoolState("diskweaver-pool", "data",
+            new ExistingPoolState("diskweaver-pool", ["data"],
             [
                 new ExistingTier("/dev/md127", AdjustedSegmentBytes(2_000_000_000_000),
                     ["/dev/disk/by-id/fake-0", "/dev/disk/by-id/fake-1", "/dev/disk/by-id/fake-2"], RaidLevel.Raid5,
@@ -486,7 +486,7 @@ public class DaemonSafetyEndpointsTests
         using var factory = new DaemonWebApplicationFactory();
         factory.PoolState.Pools =
         [
-            new ExistingPoolState("diskweaver-pool", "data",
+            new ExistingPoolState("diskweaver-pool", ["data"],
             [
                 new ExistingTier("/dev/md127", AdjustedSegmentBytes(2_000_000_000_000), ["/dev/disk/by-id/fake-0"], RaidLevel.Mirror,
                     ["/dev/disk/by-id/fake-0-part1"], ConfiguredMemberCount: 2, IsUnprotectedByDesign: true),
@@ -519,7 +519,7 @@ public class DaemonSafetyEndpointsTests
         using var factory = new DaemonWebApplicationFactory();
         factory.PoolState.Pools =
         [
-            new ExistingPoolState("diskweaver-pool", "data",
+            new ExistingPoolState("diskweaver-pool", ["data"],
             [
                 new ExistingTier("/dev/md127", AdjustedSegmentBytes(2_000_000_000_000),
                     ["/dev/disk/by-id/fake-0", "/dev/disk/by-id/fake-1"], RaidLevel.Mirror,
@@ -567,7 +567,7 @@ public class DaemonSafetyEndpointsTests
         using var factory = new DaemonWebApplicationFactory();
         factory.PoolState.Pools =
         [
-            new ExistingPoolState("diskweaver-pool", "data",
+            new ExistingPoolState("diskweaver-pool", ["data"],
             [
                 new ExistingTier("/dev/md127", AdjustedSegmentBytes(2_000_000_000_000),
                     ["/dev/disk/by-id/fake-0", "/dev/disk/by-id/fake-1"], RaidLevel.Mirror,
@@ -618,7 +618,7 @@ public class DaemonSafetyEndpointsTests
         using var factory = new DaemonWebApplicationFactory();
         factory.PoolState.Pools =
         [
-            new ExistingPoolState("diskweaver-pool", "data",
+            new ExistingPoolState("diskweaver-pool", ["data"],
             [
                 new ExistingTier("/dev/md127", AdjustedSegmentBytes(2_000_000_000_000),
                     ["/dev/disk/by-id/fake-0", "/dev/disk/by-id/fake-1"], RaidLevel.Mirror,
@@ -657,7 +657,7 @@ public class DaemonSafetyEndpointsTests
         using var factory = new DaemonWebApplicationFactory();
         factory.PoolState.Pools =
         [
-            new ExistingPoolState("diskweaver-pool", "data",
+            new ExistingPoolState("diskweaver-pool", ["data"],
             [
                 new ExistingTier("/dev/md127", AdjustedSegmentBytes(2_000_000_000_000), ["/dev/disk/by-id/fake-0"], RaidLevel.Mirror,
                     ["/dev/disk/by-id/fake-0-part1"], ConfiguredMemberCount: 2, IsUnprotectedByDesign: true),
@@ -714,7 +714,7 @@ public class DaemonSafetyEndpointsTests
         var tierSegmentBytes = AdjustedSegmentBytes(2_000_000_000_000);
         factory.PoolState.Pools =
         [
-            new ExistingPoolState("diskweaver-pool", "data",
+            new ExistingPoolState("diskweaver-pool", ["data"],
             [
                 new ExistingTier("/dev/md127", tierSegmentBytes, ["/dev/disk/by-id/fake-0"], RaidLevel.Mirror,
                     ["/dev/disk/by-id/fake-0-part1"], ConfiguredMemberCount: 2, IsUnprotectedByDesign: true),
@@ -760,7 +760,7 @@ public class DaemonSafetyEndpointsTests
         var tierSegmentBytes = AdjustedSegmentBytes(2_000_000_000_000);
         factory.PoolState.Pools =
         [
-            new ExistingPoolState("diskweaver-pool", "data",
+            new ExistingPoolState("diskweaver-pool", ["data"],
             [
                 new ExistingTier("/dev/md127", tierSegmentBytes, ["/dev/disk/by-id/fake-0"], RaidLevel.Mirror,
                     ["/dev/disk/by-id/fake-0-part1"], ConfiguredMemberCount: 2, IsUnprotectedByDesign: true),

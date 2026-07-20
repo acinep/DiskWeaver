@@ -406,3 +406,55 @@ would need a live-inspection mechanism independent of `GetPools()` (see
   above), a real fix needs background execution + polling + the
   `abort` API above, all together — not a timeout bolted onto the
   current synchronous model.
+
+## Multiple logical volumes (thin pools)
+
+By default `Build`/`BuildIncremental` still only ever create one thick LV
+named `data` per pool. But a user is free to convert a pool's VG into a
+thin pool with several thin volumes on top of it afterward (e.g. one
+Btrfs LV for a fileshare, one or two raw LVs as iSCSI backstores — see the
+SHR-style layering discussed when this was designed), and DiskWeaver's
+discovery and teardown paths have to cope with that real state:
+
+- `ExistingPoolState.VolumeNames` is a list, not a single name. It's
+  populated from `lvs -o vg_name,lv_name,pool_lv`, ordered so any thin
+  volume (non-empty `pool_lv`) sorts before the thin pool/thick LV it
+  depends on.
+- `CommandPlanner.BuildTeardownFromExisting` emits an `lvremove` for
+  every entry in that order, before `vgremove` — removing a thin pool
+  while a thin volume still references it fails, so the order matters.
+- `CommandPlanner.BuildIncremental`'s auto-`lvextend` on expand only
+  fires when there's exactly one LV (the plain `data` case). With more
+  than one, there's no way to tell which LV is the thin pool that should
+  absorb the newly-added space, so this is left as an explicit comment
+  step (`lvextend -l +100%FREE <vg>/<thin-pool-lv>`) rather than guessed
+  at.
+
+### Thin pool sizing (`Build(..., thinProvisioned: true)`)
+
+`CommandPlanner.Build` can create the pool's VG with a thin pool
+(`<poolName>-thin-pool`) instead of a thick LV, sized to
+`100 - ThinPoolHeadroomPercent` (10) percent of the VG, plus one thin
+volume named `data` with virtual size `100%POOL` (i.e. not overcommitted
+by default — same "one volume, ready to format, using all the pool has"
+result as the non-thin default, just backed by a thin pool so headroom
+exists and further thin volumes can be carved later).
+
+The headroom is deliberate: an LVM thin pool at literally 100% of its VG
+has no free extents left for its own metadata growth, and a thin pool
+that fills up puts every thin LV on it at risk of write stalls/failures —
+see the pvs/lvs `data%`/`metadata%` fields, which is what real monitoring
+of a thin pool needs to watch (not yet wired into DiskWeaver's own
+`/pools` reporting).
+
+This is opt-in and not yet wired into the daemon's `/plan`/`/build` API,
+the CLI, or Cockpit — today it's a `CommandPlanner`-level building block
+only. Also not yet done: `BuildIncremental` growing a DiskWeaver-created
+thin pool + its `data` volume together on expand (it currently falls
+into the generic ">1 LV, leave a comment" path above, same as any
+manually-thin-provisioned pool) — the `lvextend -l N%FREE`/`-l 100%POOL`
+sequence needed for that hasn't been verified against a real LVM install
+yet, so it's deliberately not automated. Individual *additional* thin
+volumes on top of the pool (fileshare/iSCSI/etc.) remain intentionally
+out of scope regardless — filesystem choice, LUN sizing, and snapshot
+policy are workload decisions DiskWeaver has no visibility into.

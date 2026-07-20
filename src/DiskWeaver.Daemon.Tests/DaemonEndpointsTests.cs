@@ -64,7 +64,7 @@ public class DaemonEndpointsTests : IClassFixture<DaemonWebApplicationFactory>
         Assert.NotNull(pools);
         var pool = Assert.Single(pools);
         Assert.Equal("diskweaver-pool", pool.PoolName);
-        Assert.Equal("data", pool.VolumeName);
+        Assert.Equal("data", pool.VolumeNames[0]);
         var tier = Assert.Single(pool.Tiers);
         Assert.Equal(RaidLevel.Mirror, tier.RaidLevel);
     }

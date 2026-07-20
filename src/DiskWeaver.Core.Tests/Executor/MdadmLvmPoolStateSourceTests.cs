@@ -16,7 +16,7 @@ public class MdadmLvmPoolStateSourceTests
             """{"report":[{"vg":[{"vg_name":"diskweaver-pool","vg_tags":["diskweaver-managed"]}]}]}""");
         runner.Respond("pvs", ["--reportformat", "json", "-o", "pv_name,vg_name,pv_tags"],
             """{"report":[{"pv":[{"pv_name":"/dev/md127","vg_name":"diskweaver-pool"}]}]}""");
-        runner.Respond("lvs", ["--reportformat", "json", "-o", "vg_name,lv_name"],
+        runner.Respond("lvs", ["--reportformat", "json", "-o", "vg_name,lv_name,pool_lv"],
             """{"report":[{"lv":[{"vg_name":"diskweaver-pool","lv_name":"data"}]}]}""");
         runner.Respond("mdadm", ["--detail", "--export", "/dev/md127"], """
             MD_LEVEL=raid5
@@ -35,12 +35,48 @@ public class MdadmLvmPoolStateSourceTests
 
         var pool = Assert.Single(pools);
         Assert.Equal("diskweaver-pool", pool.PoolName);
-        Assert.Equal("data", pool.VolumeName);
+        Assert.Equal("data", pool.VolumeNames[0]);
         var tier = Assert.Single(pool.Tiers);
         Assert.Equal("/dev/md127", tier.ArrayDevice);
         Assert.Equal(2145386496, tier.SegmentSizeBytes);
         Assert.Equal(RaidLevel.Raid5, tier.RaidLevel);
         Assert.Equal(["/dev/loop0", "/dev/loop1", "/dev/loop2"], tier.DiskIds);
+    }
+
+    [Fact]
+    public void ThinPoolWithMultipleVolumes_ReportsAllOfThem_ThinVolumesBeforeTheirPool()
+    {
+        // A VG converted to a thin pool with volumes carved on top of it (a real setup DiskWeaver
+        // doesn't create but must still be able to discover and tear down) -- lvs then reports the
+        // thin pool LV itself plus every thin volume, distinguished by a non-empty pool_lv on the
+        // thin volumes. CommandPlanner.BuildTeardownFromExisting needs them in thin-volumes-first
+        // order so removing the pool never runs while a volume still references it.
+        var runner = new FakeCommandRunner();
+        runner.Respond("vgs", ["--reportformat", "json", "-o", "vg_name,vg_tags"],
+            """{"report":[{"vg":[{"vg_name":"diskweaver-pool","vg_tags":["diskweaver-managed"]}]}]}""");
+        runner.Respond("pvs", ["--reportformat", "json", "-o", "pv_name,vg_name,pv_tags"],
+            """{"report":[{"pv":[{"pv_name":"/dev/md127","vg_name":"diskweaver-pool"}]}]}""");
+        runner.Respond("lvs", ["--reportformat", "json", "-o", "vg_name,lv_name,pool_lv"], """
+            {"report":[{"lv":[
+                {"vg_name":"diskweaver-pool","lv_name":"thin-pool","pool_lv":""},
+                {"vg_name":"diskweaver-pool","lv_name":"lv-fileshare","pool_lv":"thin-pool"},
+                {"vg_name":"diskweaver-pool","lv_name":"lv-iscsi-01","pool_lv":"thin-pool"}
+            ]}]}
+            """);
+        runner.Respond("mdadm", ["--detail", "--export", "/dev/md127"], """
+            MD_LEVEL=raid1
+            MD_DEVICE_dev_loop0p1_DEV=/dev/loop0p1
+            MD_DEVICE_dev_loop0p1_ROLE=0
+            MD_DEVICE_dev_loop1p1_DEV=/dev/loop1p1
+            MD_DEVICE_dev_loop1p1_ROLE=1
+            """);
+        runner.Respond("blockdev", ["--getsize64", "/dev/loop0p1"], "2145386496\n");
+        runner.Respond("cat", ["/proc/mdstat"], "");
+
+        var source = new MdadmLvmPoolStateSource(runner, new FakeDiskInventorySource());
+        var pool = Assert.Single(source.GetPools());
+
+        Assert.Equal(["lv-fileshare", "lv-iscsi-01", "thin-pool"], pool.VolumeNames);
     }
 
     [Fact]
@@ -51,7 +87,7 @@ public class MdadmLvmPoolStateSourceTests
             """{"report":[{"vg":[{"vg_name":"diskweaver-pool","vg_tags":["diskweaver-managed"]}]}]}""");
         runner.Respond("pvs", ["--reportformat", "json", "-o", "pv_name,vg_name,pv_tags"],
             """{"report":[{"pv":[{"pv_name":"/dev/md127","vg_name":"diskweaver-pool","pv_tags":["diskweaver-unprotected"]}]}]}""");
-        runner.Respond("lvs", ["--reportformat", "json", "-o", "vg_name,lv_name"],
+        runner.Respond("lvs", ["--reportformat", "json", "-o", "vg_name,lv_name,pool_lv"],
             """{"report":[{"lv":[{"vg_name":"diskweaver-pool","lv_name":"data"}]}]}""");
         runner.Respond("mdadm", ["--detail", "--export", "/dev/md127"], """
             MD_LEVEL=raid1
@@ -78,7 +114,7 @@ public class MdadmLvmPoolStateSourceTests
             """{"report":[{"vg":[{"vg_name":"diskweaver-pool","vg_tags":["diskweaver-managed"]}]}]}""");
         runner.Respond("pvs", ["--reportformat", "json", "-o", "pv_name,vg_name,pv_tags"],
             """{"report":[{"pv":[{"pv_name":"/dev/md127","vg_name":"diskweaver-pool"}]}]}""");
-        runner.Respond("lvs", ["--reportformat", "json", "-o", "vg_name,lv_name"],
+        runner.Respond("lvs", ["--reportformat", "json", "-o", "vg_name,lv_name,pool_lv"],
             """{"report":[{"lv":[{"vg_name":"diskweaver-pool","lv_name":"data"}]}]}""");
         runner.Respond("mdadm", ["--detail", "--export", "/dev/md127"], """
             MD_LEVEL=raid1
@@ -107,7 +143,7 @@ public class MdadmLvmPoolStateSourceTests
             """{"report":[{"vg":[{"vg_name":"diskweaver-pool","vg_tags":["diskweaver-managed"]}]}]}""");
         runner.Respond("pvs", ["--reportformat", "json", "-o", "pv_name,vg_name,pv_tags"],
             """{"report":[{"pv":[{"pv_name":"/dev/md127","vg_name":"diskweaver-pool"}]}]}""");
-        runner.Respond("lvs", ["--reportformat", "json", "-o", "vg_name,lv_name"],
+        runner.Respond("lvs", ["--reportformat", "json", "-o", "vg_name,lv_name,pool_lv"],
             """{"report":[{"lv":[{"vg_name":"diskweaver-pool","lv_name":"data"}]}]}""");
         runner.Respond("mdadm", ["--detail", "--export", "/dev/md127"], """
             MD_LEVEL=raid5
@@ -142,7 +178,7 @@ public class MdadmLvmPoolStateSourceTests
             """{"report":[{"vg":[{"vg_name":"diskweaver-pool","vg_tags":["diskweaver-managed"]}]}]}""");
         runner.Respond("pvs", ["--reportformat", "json", "-o", "pv_name,vg_name,pv_tags"],
             """{"report":[{"pv":[{"pv_name":"/dev/md127","vg_name":"diskweaver-pool"}]}]}""");
-        runner.Respond("lvs", ["--reportformat", "json", "-o", "vg_name,lv_name"],
+        runner.Respond("lvs", ["--reportformat", "json", "-o", "vg_name,lv_name,pool_lv"],
             """{"report":[{"lv":[{"vg_name":"diskweaver-pool","lv_name":"data"}]}]}""");
         runner.Respond("mdadm", ["--detail", "--export", "/dev/md127"], """
             MD_LEVEL=raid5
@@ -172,7 +208,7 @@ public class MdadmLvmPoolStateSourceTests
         var runner = new FakeCommandRunner();
         runner.Respond("vgs", ["--reportformat", "json", "-o", "vg_name,vg_tags"], """{"report":[{"vg":[]}]}""");
         runner.Respond("pvs", ["--reportformat", "json", "-o", "pv_name,vg_name,pv_tags"], """{"report":[{"pv":[]}]}""");
-        runner.Respond("lvs", ["--reportformat", "json", "-o", "vg_name,lv_name"], """{"report":[{"lv":[]}]}""");
+        runner.Respond("lvs", ["--reportformat", "json", "-o", "vg_name,lv_name,pool_lv"], """{"report":[{"lv":[]}]}""");
         runner.Respond("cat", ["/proc/mdstat"], "");
 
         var source = new MdadmLvmPoolStateSource(runner, new FakeDiskInventorySource());
@@ -193,7 +229,7 @@ public class MdadmLvmPoolStateSourceTests
             """{"report":[{"vg":[{"vg_name":"diskweaver-pool","vg_tags":["diskweaver-managed"]}]}]}""");
         runner.Respond("pvs", ["--reportformat", "json", "-o", "pv_name,vg_name,pv_tags"],
             """{"report":[{"pv":[{"pv_name":"[unknown]","vg_name":"diskweaver-pool"}]}]}""");
-        runner.Respond("lvs", ["--reportformat", "json", "-o", "vg_name,lv_name"],
+        runner.Respond("lvs", ["--reportformat", "json", "-o", "vg_name,lv_name,pool_lv"],
             """{"report":[{"lv":[{"vg_name":"diskweaver-pool","lv_name":"data"}]}]}""");
         runner.Respond("cat", ["/proc/mdstat"], "");
 
@@ -214,7 +250,7 @@ public class MdadmLvmPoolStateSourceTests
             """{"report":[{"vg":[{"vg_name":"diskweaver-pool","vg_tags":["diskweaver-managed"]}]}]}""");
         runner.Respond("pvs", ["--reportformat", "json", "-o", "pv_name,vg_name,pv_tags"],
             """{"report":[{"pv":[{"pv_name":"/dev/md127","vg_name":"diskweaver-pool"},{"pv_name":"[unknown]","vg_name":"diskweaver-pool"}]}]}""");
-        runner.Respond("lvs", ["--reportformat", "json", "-o", "vg_name,lv_name"],
+        runner.Respond("lvs", ["--reportformat", "json", "-o", "vg_name,lv_name,pool_lv"],
             """{"report":[{"lv":[{"vg_name":"diskweaver-pool","lv_name":"data"}]}]}""");
         runner.Respond("mdadm", ["--detail", "--export", "/dev/md127"], """
             MD_LEVEL=raid5
@@ -249,7 +285,7 @@ public class MdadmLvmPoolStateSourceTests
             """{"report":[{"vg":[{"vg_name":"diskweaver-pool","vg_tags":["diskweaver-managed"]}]}]}""");
         runner.Respond("pvs", ["--reportformat", "json", "-o", "pv_name,vg_name,pv_tags"],
             """{"report":[{"pv":[{"pv_name":"/dev/md127","vg_name":"diskweaver-pool"}]}]}""");
-        runner.Respond("lvs", ["--reportformat", "json", "-o", "vg_name,lv_name"],
+        runner.Respond("lvs", ["--reportformat", "json", "-o", "vg_name,lv_name,pool_lv"],
             """{"report":[{"lv":[{"vg_name":"diskweaver-pool","lv_name":"data"}]}]}""");
         runner.Respond("mdadm", ["--detail", "--export", "/dev/md127"], """
             MD_LEVEL=raid1
@@ -288,7 +324,7 @@ public class MdadmLvmPoolStateSourceTests
             """{"report":[{"vg":[{"vg_name":"diskweaver-pool","vg_tags":[]}]}]}""");
         runner.Respond("pvs", ["--reportformat", "json", "-o", "pv_name,vg_name,pv_tags"],
             """{"report":[{"pv":[{"pv_name":"/dev/md127","vg_name":"diskweaver-pool"}]}]}""");
-        runner.Respond("lvs", ["--reportformat", "json", "-o", "vg_name,lv_name"],
+        runner.Respond("lvs", ["--reportformat", "json", "-o", "vg_name,lv_name,pool_lv"],
             """{"report":[{"lv":[{"vg_name":"diskweaver-pool","lv_name":"data"}]}]}""");
         runner.Respond("cat", ["/proc/mdstat"], "");
 

@@ -17,10 +17,16 @@ public static class CommandPlanner
     /// (rather than a fixed "diskweaver-tier" prefix) is what lets two differently-named pools
     /// coexist on one host without an mdadm "array name already in use" collision.
     /// </summary>
+    /// <summary>Space left unallocated in a thin pool's VG so metadata growth and reporting never have
+    /// literally zero free extents to work with -- see the "Thin pool sizing" note in docs/execution.md
+    /// for why this needs to be a real, if small, reservation rather than 100%FREE.</summary>
+    public const int ThinPoolHeadroomPercent = 10;
+
     public static ExecutionPlan Build(
         PoolPlan plan,
         string poolName = "diskweaver-pool",
-        string volumeName = "data")
+        string volumeName = "data",
+        bool thinProvisioned = false)
     {
         var labeledDisks = new HashSet<string>();
         var nextPartitionNumber = new Dictionary<string, int>();
@@ -53,10 +59,32 @@ public static class CommandPlanner
 
             AppendUnprotectedTagSteps(steps, unprotectedArrayDevices);
 
-            steps.Add(new ExecutionStep(
-                $"Create logical volume {volumeName} using all pool space",
-                "lvcreate",
-                ["-l", "100%FREE", "-n", volumeName, poolName]));
+            if (thinProvisioned)
+            {
+                var thinPoolName = $"{poolName}-thin-pool";
+                var poolPercent = 100 - ThinPoolHeadroomPercent;
+                steps.Add(new ExecutionStep(
+                    $"Create thin pool {thinPoolName} using {poolPercent}% of pool space, "
+                    + $"leaving {ThinPoolHeadroomPercent}% headroom",
+                    "lvcreate",
+                    ["--type", "thin-pool", "-l", $"{poolPercent}%FREE", "-n", thinPoolName, poolName]));
+
+                // Virtual size 100%POOL (not overcommitted) rather than a chosen larger size: matches
+                // the non-thin default's "one volume, ready to format, using all the pool has" behavior
+                // -- the point of thinProvisioned here is the headroom + later-carved-volumes option
+                // (see docs/execution.md), not overcommit by default.
+                steps.Add(new ExecutionStep(
+                    $"Create thin logical volume {volumeName} sized to the thin pool's full capacity",
+                    "lvcreate",
+                    ["--thin", "-V", "100%POOL", "-T", $"{poolName}/{thinPoolName}", "-n", volumeName]));
+            }
+            else
+            {
+                steps.Add(new ExecutionStep(
+                    $"Create logical volume {volumeName} using all pool space",
+                    "lvcreate",
+                    ["-l", "100%FREE", "-n", volumeName, poolName]));
+            }
 
             AppendMdadmConfPersistSteps(steps, arrayDevices);
         }
@@ -145,10 +173,25 @@ public static class CommandPlanner
 
         if (newArrayDevices.Count > 0 || grewAnyTierInPlace)
         {
-            steps.Add(new ExecutionStep(
-                $"Grow logical volume {current.VolumeName} to use the added space",
-                "lvextend",
-                ["-l", "+100%FREE", $"{current.PoolName}/{current.VolumeName}"]));
+            if (current.VolumeNames.Count == 1)
+            {
+                var volumeName = current.VolumeNames[0];
+                steps.Add(new ExecutionStep(
+                    $"Grow logical volume {volumeName} to use the added space",
+                    "lvextend",
+                    ["-l", "+100%FREE", $"{current.PoolName}/{volumeName}"]));
+            }
+            else
+            {
+                // More than one LV means someone's since carved this VG into a thin pool with
+                // volumes on top (DiskWeaver never creates more than the one plain "data" LV
+                // itself) -- there's no way to tell which of these is the thin pool that should
+                // absorb the new space, so this is left as a manual step rather than guessed at.
+                steps.Add(ExecutionStep.Comment(
+                    $"Volume group {current.PoolName} has {current.VolumeNames.Count} logical volumes "
+                    + $"({string.Join(", ", current.VolumeNames)}) -- grow the appropriate one "
+                    + "yourself, e.g.: lvextend -l +100%FREE <vg>/<thin-pool-lv>"));
+            }
         }
 
         return new ExecutionPlan(steps);
@@ -599,14 +642,27 @@ public static class CommandPlanner
     public static ExecutionPlan BuildTeardown(
         PoolPlan plan,
         string poolName = "diskweaver-pool",
-        string volumeName = "data")
+        string volumeName = "data",
+        bool thinProvisioned = false)
     {
         var steps = new List<ExecutionStep>
         {
             ExecutionStep.Comment("Unmount the filesystem first if it's mounted, e.g.: umount <mountpoint>"),
-            new($"Remove logical volume {volumeName}", "lvremove", ["-f", $"{poolName}/{volumeName}"]),
-            new($"Remove volume group {poolName}", "vgremove", ["-f", poolName]),
         };
+
+        // Mirrors Build's creation order in reverse: the thin volume depends on the thin pool, so it
+        // must go first (matches BuildTeardownFromExisting's general thin-volumes-before-pool rule).
+        if (thinProvisioned)
+        {
+            steps.Add(new ExecutionStep($"Remove logical volume {volumeName}", "lvremove", ["-f", $"{poolName}/{volumeName}"]));
+            steps.Add(new ExecutionStep($"Remove thin pool {poolName}-thin-pool", "lvremove", ["-f", $"{poolName}/{poolName}-thin-pool"]));
+        }
+        else
+        {
+            steps.Add(new ExecutionStep($"Remove logical volume {volumeName}", "lvremove", ["-f", $"{poolName}/{volumeName}"]));
+        }
+
+        steps.Add(new ExecutionStep($"Remove volume group {poolName}", "vgremove", ["-f", poolName]));
 
         var nextPartitionNumber = new Dictionary<string, int>();
 
@@ -653,10 +709,18 @@ public static class CommandPlanner
     {
         var steps = new List<ExecutionStep>
         {
-            ExecutionStep.Comment("Unmount the filesystem first if it's mounted, e.g.: umount <mountpoint>"),
-            new($"Remove logical volume {pool.VolumeName}", "lvremove", ["-f", $"{pool.PoolName}/{pool.VolumeName}"]),
-            new($"Remove volume group {pool.PoolName}", "vgremove", ["-f", pool.PoolName]),
+            ExecutionStep.Comment("Unmount the filesystem(s) first if mounted, e.g.: umount <mountpoint>"),
         };
+
+        // pool.VolumeNames is already in safe-removal order (thin volumes before the thin pool/thick
+        // LV they depend on) -- removing a thin pool while thin volumes still reference it fails, so
+        // this can't just remove them in whatever order lvs happened to report.
+        foreach (var volumeName in pool.VolumeNames)
+        {
+            steps.Add(new ExecutionStep($"Remove logical volume {volumeName}", "lvremove", ["-f", $"{pool.PoolName}/{volumeName}"]));
+        }
+
+        steps.Add(new ExecutionStep($"Remove volume group {pool.PoolName}", "vgremove", ["-f", pool.PoolName]));
 
         // Uses each tier's real PartitionPaths (from mdadm --detail --export) rather than
         // re-deriving them from a partition-numbering convention -- after an incremental

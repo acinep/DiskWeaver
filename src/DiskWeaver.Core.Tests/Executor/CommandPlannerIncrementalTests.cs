@@ -25,7 +25,7 @@ public class CommandPlannerIncrementalTests
         // dictionaries already thread correctly across multiple grow candidates in one call.
         var existing = new ExistingPoolState(
             "diskweaver-pool",
-            "data",
+            ["data"],
             [
                 new ExistingTier("/dev/md127", 2 * Tb, ["/dev/disk/by-id/d0"], RaidLevel.Mirror,
                     PartitionPaths("/dev/disk/by-id/d0")),
@@ -55,6 +55,34 @@ public class CommandPlannerIncrementalTests
     }
 
     [Fact]
+    public void PoolWithMultipleLogicalVolumes_SkipsAutoLvextend_LeavesACommentInstead()
+    {
+        // A VG someone's since converted to a thin pool with volumes carved on top (not something
+        // DiskWeaver creates itself) reports more than one entry in VolumeNames. There's no way to
+        // tell which LV is the thin pool that should absorb newly-added space, so this must not
+        // blindly lvextend one of them -- confirmed via BuildIncremental's real lvextend step
+        // unconditionally succeeding pre-fix regardless of which LV it grew.
+        var existing = new ExistingPoolState(
+            "diskweaver-pool",
+            ["lv-fileshare", "lv-iscsi-01", "thin-pool"],
+            [new ExistingTier(
+                "/dev/md/diskweaver-tier0",
+                2 * Tb,
+                ["/dev/disk/by-id/d0", "/dev/disk/by-id/d1", "/dev/disk/by-id/d2"],
+                RaidLevel.Raid5,
+                PartitionPaths("/dev/disk/by-id/d0", "/dev/disk/by-id/d1", "/dev/disk/by-id/d2"))]);
+
+        var desired = TieringPlanner.Plan(
+            [Disk("d0", 2), Disk("d1", 2), Disk("d2", 2), Disk("d3", 4), Disk("d4", 4)], RedundancyLevel.Dwr1);
+
+        var plan = CommandPlanner.BuildIncremental(existing, desired);
+
+        Assert.DoesNotContain(plan.Steps, s => s.Command == "lvextend");
+        Assert.Contains(plan.Steps, s => s.Command is null
+            && s.Description.Contains("lv-fileshare") && s.Description.Contains("lv-iscsi-01") && s.Description.Contains("thin-pool"));
+    }
+
+    [Fact]
     public void AddingTwoLargerDisks_CreatesNewTopTier_AndAutomaticallyGrowsBottomTierInPlace()
     {
         // Existing pool: three 2TB disks, RAID5. Note the bottom tier always spans every disk in the
@@ -62,7 +90,7 @@ public class CommandPlannerIncrementalTests
         // no such thing as an addition that leaves every existing tier fully alone.
         var existing = new ExistingPoolState(
             "diskweaver-pool",
-            "data",
+            ["data"],
             [new ExistingTier(
                 "/dev/md/diskweaver-tier0",
                 2 * Tb,
@@ -119,7 +147,7 @@ public class CommandPlannerIncrementalTests
         // Model: 2,2,2,6 existing where only (0,2] is built, (2,6] reserved.
         var existing = new ExistingPoolState(
             "diskweaver-pool",
-            "data",
+            ["data"],
             [new ExistingTier("/dev/md/diskweaver-tier0", 2 * Tb, ["/dev/disk/by-id/d0", "/dev/disk/by-id/d1", "/dev/disk/by-id/d2"], RaidLevel.Raid5,
                 PartitionPaths("/dev/disk/by-id/d0", "/dev/disk/by-id/d1", "/dev/disk/by-id/d2"))]);
 
@@ -154,7 +182,7 @@ public class CommandPlannerIncrementalTests
         // Existing pool: 2,2,2 RAID5.
         var existing = new ExistingPoolState(
             "diskweaver-pool",
-            "data",
+            ["data"],
             [new ExistingTier("/dev/md/diskweaver-tier0", 2 * Tb, ["/dev/disk/by-id/d0", "/dev/disk/by-id/d1", "/dev/disk/by-id/d2"], RaidLevel.Raid5,
                 PartitionPaths("/dev/disk/by-id/d0", "/dev/disk/by-id/d1", "/dev/disk/by-id/d2"))]);
 
@@ -185,7 +213,7 @@ public class CommandPlannerIncrementalTests
         // same-level grow otherwise.
         var existing = new ExistingPoolState(
             "diskweaver-pool",
-            "data",
+            ["data"],
             [new ExistingTier("/dev/md127", 2 * Tb, ["/dev/disk/by-id/d0", "/dev/disk/by-id/d1"], RaidLevel.Mirror,
                 PartitionPaths("/dev/disk/by-id/d0", "/dev/disk/by-id/d1"))]);
 
@@ -212,7 +240,7 @@ public class CommandPlannerIncrementalTests
         // way as a same-level grow, so achieved should reflect the full 3-disk RAID5 capacity.
         var existing = new ExistingPoolState(
             "diskweaver-pool",
-            "data",
+            ["data"],
             [new ExistingTier("/dev/md127", 2 * Tb, ["/dev/disk/by-id/d0", "/dev/disk/by-id/d1"], RaidLevel.Mirror,
                 PartitionPaths("/dev/disk/by-id/d0", "/dev/disk/by-id/d1"))]);
 
@@ -231,7 +259,7 @@ public class CommandPlannerIncrementalTests
         // capacity should reflect the desired 4-disk RAID5's usable bytes, not the old 3-disk one.
         var existing = new ExistingPoolState(
             "diskweaver-pool",
-            "data",
+            ["data"],
             [new ExistingTier("/dev/md/diskweaver-tier0", 2 * Tb, ["/dev/disk/by-id/d0", "/dev/disk/by-id/d1", "/dev/disk/by-id/d2"], RaidLevel.Raid5,
                 PartitionPaths("/dev/disk/by-id/d0", "/dev/disk/by-id/d1", "/dev/disk/by-id/d2"))]);
 
@@ -251,7 +279,7 @@ public class CommandPlannerIncrementalTests
         // Both are achieved, since both are automated.
         var existing = new ExistingPoolState(
             "diskweaver-pool",
-            "data",
+            ["data"],
             [new ExistingTier("/dev/md127", 2 * Tb, ["/dev/disk/by-id/d0", "/dev/disk/by-id/d1"], RaidLevel.Mirror,
                 PartitionPaths("/dev/disk/by-id/d0", "/dev/disk/by-id/d1"))]);
 
@@ -276,7 +304,7 @@ public class CommandPlannerIncrementalTests
         // since that combined change is legal from a 2-disk source), then RAID5 -> RAID6 in place.
         var existing = new ExistingPoolState(
             "diskweaver-pool",
-            "data",
+            ["data"],
             [new ExistingTier("/dev/md127", 2 * Tb, ["/dev/disk/by-id/d0", "/dev/disk/by-id/d1"], RaidLevel.Mirror,
                 PartitionPaths("/dev/disk/by-id/d0", "/dev/disk/by-id/d1"))]);
 
@@ -305,7 +333,7 @@ public class CommandPlannerIncrementalTests
         // not before or interleaved with it.
         var existing = new ExistingPoolState(
             "diskweaver-pool",
-            "data",
+            ["data"],
             [new ExistingTier("/dev/md127", 2 * Tb, ["/dev/disk/by-id/d0", "/dev/disk/by-id/d1"], RaidLevel.Mirror,
                 PartitionPaths("/dev/disk/by-id/d0", "/dev/disk/by-id/d1"))]);
 
@@ -332,7 +360,7 @@ public class CommandPlannerIncrementalTests
         // *before* the level-change grow, not after.
         var existing = new ExistingPoolState(
             "diskweaver-pool",
-            "data",
+            ["data"],
             [new ExistingTier("/dev/md127", 2 * Tb, ["/dev/disk/by-id/d0", "/dev/disk/by-id/d1", "/dev/disk/by-id/d2"], RaidLevel.Raid5,
                 PartitionPaths("/dev/disk/by-id/d0", "/dev/disk/by-id/d1", "/dev/disk/by-id/d2"))]);
 
@@ -358,7 +386,7 @@ public class CommandPlannerIncrementalTests
         // untouched, since the *final* level is RAID6, not RAID5.
         var existing = new ExistingPoolState(
             "diskweaver-pool",
-            "data",
+            ["data"],
             [new ExistingTier("/dev/md127", 2 * Tb, ["/dev/disk/by-id/d0", "/dev/disk/by-id/d1"], RaidLevel.Mirror,
                 PartitionPaths("/dev/disk/by-id/d0", "/dev/disk/by-id/d1"))]);
 
@@ -379,7 +407,7 @@ public class CommandPlannerIncrementalTests
         // "mdadm: Impossibly level change request for RAID1" after spares have already been added.
         var existing = new ExistingPoolState(
             "diskweaver-pool",
-            "data",
+            ["data"],
             [new ExistingTier("/dev/md127", 2 * Tb,
                 ["/dev/disk/by-id/d0", "/dev/disk/by-id/d1", "/dev/disk/by-id/d2"], RaidLevel.Mirror,
                 PartitionPaths("/dev/disk/by-id/d0", "/dev/disk/by-id/d1", "/dev/disk/by-id/d2"))]);
@@ -402,7 +430,7 @@ public class CommandPlannerIncrementalTests
         // since the array was already configured for 2 members from the start.
         var existing = new ExistingPoolState(
             "diskweaver-pool",
-            "data",
+            ["data"],
             [new ExistingTier("/dev/md127", 2 * Tb, ["/dev/disk/by-id/d0"], RaidLevel.Mirror,
                 PartitionPaths("/dev/disk/by-id/d0"), ConfiguredMemberCount: 2)]);
 
@@ -432,7 +460,7 @@ public class CommandPlannerIncrementalTests
         // that fails mid-execution.
         var existing = new ExistingPoolState(
             "diskweaver-pool",
-            "data",
+            ["data"],
             [new ExistingTier("/dev/md127", 2 * Tb, ["/dev/disk/by-id/d0"], RaidLevel.Mirror,
                 PartitionPaths("/dev/disk/by-id/d0"), ConfiguredMemberCount: 2)]);
 
@@ -454,7 +482,7 @@ public class CommandPlannerIncrementalTests
         // grow candidate and orphan the other with a confusing "doesn't correspond to any tier" error.
         var existing = new ExistingPoolState(
             "diskweaver-pool",
-            "data",
+            ["data"],
             [
                 new ExistingTier("/dev/md127", 2 * Tb, ["/dev/disk/by-id/d0"], RaidLevel.Mirror,
                     PartitionPaths("/dev/disk/by-id/d0")),
@@ -478,7 +506,7 @@ public class CommandPlannerIncrementalTests
         // Existing pool: 2,2,4,4 -- tier0 (0,2] all four disks mirror-ish RAID5, tier1 (2,4] mirror on the two 4TB disks.
         var existing = new ExistingPoolState(
             "diskweaver-pool",
-            "data",
+            ["data"],
             [
                 new ExistingTier("/dev/md/diskweaver-tier0", 2 * Tb, ["/dev/disk/by-id/d0", "/dev/disk/by-id/d1", "/dev/disk/by-id/d2", "/dev/disk/by-id/d3"], RaidLevel.Raid5,
                     PartitionPaths("/dev/disk/by-id/d0", "/dev/disk/by-id/d1", "/dev/disk/by-id/d2", "/dev/disk/by-id/d3")),

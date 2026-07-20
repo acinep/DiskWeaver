@@ -42,6 +42,33 @@ public class CommandPlannerTests
     }
 
     [Fact]
+    public void ThinProvisioned_CreatesThinPoolWithHeadroom_ThenAThinVolumeSizedToTheFullPool()
+    {
+        var poolPlan = TieringPlanner.Plan(Disks(2, 2, 4, 4, 4), RedundancyLevel.Dwr1);
+        var plan = CommandPlanner.Build(poolPlan, thinProvisioned: true);
+
+        Assert.DoesNotContain(plan.Steps, s => s.Command == "lvcreate"
+            && s.Arguments.SequenceEqual(new[] { "-l", "100%FREE", "-n", "data", "diskweaver-pool" }));
+
+        var thinPoolStep = Assert.Single(plan.Steps, s => s.Command == "lvcreate" && s.Arguments.Contains("thin-pool"));
+        Assert.Equal(
+            ["--type", "thin-pool", "-l", "90%FREE", "-n", "diskweaver-pool-thin-pool", "diskweaver-pool"],
+            thinPoolStep.Arguments);
+
+        var thinVolumeStep = Assert.Single(plan.Steps, s => s.Command == "lvcreate" && s.Arguments.Contains("--thin"));
+        Assert.Equal(
+            ["--thin", "-V", "100%POOL", "-T", "diskweaver-pool/diskweaver-pool-thin-pool", "-n", "data"],
+            thinVolumeStep.Arguments);
+
+        // The thin pool must exist (and be part of the VG) before anything tries to carve a volume
+        // from it.
+        var vgCreateIndex = plan.Steps.ToList().FindIndex(s => s.Command == "vgcreate");
+        var thinPoolIndex = plan.Steps.ToList().FindIndex(s => s == thinPoolStep);
+        var thinVolumeIndex = plan.Steps.ToList().FindIndex(s => s == thinVolumeStep);
+        Assert.True(vgCreateIndex < thinPoolIndex && thinPoolIndex < thinVolumeIndex);
+    }
+
+    [Fact]
     public void ReservedSegment_EmitsCommentOnly_NoInvocation()
     {
         var poolPlan = TieringPlanner.Plan(Disks(2, 2, 2, 6), RedundancyLevel.Dwr1);

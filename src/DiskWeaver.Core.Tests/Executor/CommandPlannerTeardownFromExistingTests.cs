@@ -9,7 +9,7 @@ public class CommandPlannerTeardownFromExistingTests
     {
         var pool = new ExistingPoolState(
             "custom-pool",
-            "custom-volume",
+            ["custom-volume"],
             [new ExistingTier("/dev/md127", 2_000_000_000_000, ["/dev/loop0", "/dev/loop1"], RaidLevel.Mirror, ["/dev/loop0p1", "/dev/loop1p1"])]);
 
         var steps = CommandPlanner.BuildTeardownFromExisting(pool).Steps;
@@ -30,7 +30,7 @@ public class CommandPlannerTeardownFromExistingTests
         // wrong partition for md0's superblock wipe -- using PartitionPaths directly avoids that.
         var pool = new ExistingPoolState(
             "diskweaver-pool",
-            "data",
+            ["data"],
             [
                 new ExistingTier("/dev/md1", 4_000_000_000_000, ["/dev/loop2", "/dev/loop3"], RaidLevel.Mirror, ["/dev/loop2p1", "/dev/loop3p1"]),
                 new ExistingTier("/dev/md0", 2_000_000_000_000, ["/dev/loop0", "/dev/loop1", "/dev/loop2", "/dev/loop3"], RaidLevel.Raid5, ["/dev/loop0p1", "/dev/loop1p1", "/dev/loop2p2", "/dev/loop3p2"]),
@@ -53,7 +53,7 @@ public class CommandPlannerTeardownFromExistingTests
     {
         var pool = new ExistingPoolState(
             "diskweaver-pool",
-            "data",
+            ["data"],
             [new ExistingTier("/dev/md127", 2_000_000_000_000, ["/dev/loop0", "/dev/disk/by-id/wwn-real"], RaidLevel.Mirror, ["/dev/loop0p1", "/dev/disk/by-id/wwn-real-part1"])]);
 
         var steps = CommandPlanner.BuildTeardownFromExisting(pool).Steps;
@@ -72,7 +72,7 @@ public class CommandPlannerTeardownFromExistingTests
         // via this method still read back as "not blank" on the very next plan/build request.
         var pool = new ExistingPoolState(
             "diskweaver-pool",
-            "data",
+            ["data"],
             [new ExistingTier("/dev/md127", 2_000_000_000_000, ["/dev/loop0", "/dev/loop1"], RaidLevel.Mirror,
                 ["/dev/loop0p1", "/dev/loop1p1"])]);
 
@@ -86,5 +86,30 @@ public class CommandPlannerTeardownFromExistingTests
         Assert.True(wipefsLoop0 >= 0 && wipefsLoop0 < partprobeLoop0, "wipefs must run before its disk's rescan");
         Assert.True(partprobeLoop0 < settle, "the rescan must be waited on via udevadm settle");
         Assert.True(settle < losetupLoop0, "the rescan must finish before detaching the loop device");
+    }
+
+    [Fact]
+    public void RemovesEveryLogicalVolume_ThinVolumesBeforeTheirThinPool()
+    {
+        // A pool converted to a thin pool with volumes carved on top (not something DiskWeaver
+        // creates itself, but real disk state it must still be able to tear down) reports every LV
+        // -- MdadmLvmPoolStateSource already orders VolumeNames thin-volumes-first, so this just
+        // needs to emit an lvremove for each one, in that order, before the vgremove.
+        var pool = new ExistingPoolState(
+            "diskweaver-pool",
+            ["lv-fileshare", "lv-iscsi-01", "thin-pool"],
+            [new ExistingTier("/dev/md127", 2_000_000_000_000, ["/dev/loop0", "/dev/loop1"], RaidLevel.Mirror, ["/dev/loop0p1", "/dev/loop1p1"])]);
+
+        var steps = CommandPlanner.BuildTeardownFromExisting(pool).Steps.ToList();
+
+        var fileshareRemove = steps.FindIndex(s => s.Command == "lvremove" && s.Arguments.Contains("diskweaver-pool/lv-fileshare"));
+        var iscsiRemove = steps.FindIndex(s => s.Command == "lvremove" && s.Arguments.Contains("diskweaver-pool/lv-iscsi-01"));
+        var poolRemove = steps.FindIndex(s => s.Command == "lvremove" && s.Arguments.Contains("diskweaver-pool/thin-pool"));
+        var vgRemove = steps.FindIndex(s => s.Command == "vgremove" && s.Arguments.Contains("diskweaver-pool"));
+
+        Assert.True(fileshareRemove >= 0 && iscsiRemove >= 0 && poolRemove >= 0);
+        Assert.True(fileshareRemove < poolRemove, "a thin volume must be removed before its thin pool");
+        Assert.True(iscsiRemove < poolRemove, "a thin volume must be removed before its thin pool");
+        Assert.True(poolRemove < vgRemove, "every LV must be removed before the VG itself");
     }
 }

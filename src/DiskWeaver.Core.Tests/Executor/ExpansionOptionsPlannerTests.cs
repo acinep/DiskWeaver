@@ -35,7 +35,7 @@ public class ExpansionOptionsPlannerTests
         // matching disk -- strictly more protection (0 real members short -> fully populated), but
         // mdadm's mirror capacity never changes with member count, so growing "independently" would
         // reach the exact same capacity -- not a real space option.
-        var pool = new ExistingPoolState("diskweaver-pool", "data", [UnprotectedTier("/dev/md127", "/dev/disk/by-id/d0", 2)]);
+        var pool = new ExistingPoolState("diskweaver-pool", ["data"], [UnprotectedTier("/dev/md127", "/dev/disk/by-id/d0", 2)]);
         var newDisks = new[] { NewDisk("d1", 2) };
         var allDisks = new[] { NewDisk("d0", 2), NewDisk("d1", 2) };
 
@@ -51,7 +51,7 @@ public class ExpansionOptionsPlannerTests
     {
         // Pool's already a healthy 2-disk mirror -- nothing to protect, but a matching disk still
         // grows it (mirror -> RAID5), which is a real capacity increase.
-        var pool = new ExistingPoolState("diskweaver-pool", "data",
+        var pool = new ExistingPoolState("diskweaver-pool", ["data"],
             [ProtectedMirror("/dev/md127", "/dev/disk/by-id/d0", "/dev/disk/by-id/d1", 2)]);
         var newDisks = new[] { NewDisk("d2", 2) };
         var allDisks = new[] { NewDisk("d0", 2), NewDisk("d1", 2), NewDisk("d2", 2) };
@@ -67,7 +67,7 @@ public class ExpansionOptionsPlannerTests
     [Fact]
     public void BothAvailable_OneDiskCompletesADegradedTier_AnotherGrowsAHealthyOne()
     {
-        var pool = new ExistingPoolState("diskweaver-pool", "data",
+        var pool = new ExistingPoolState("diskweaver-pool", ["data"],
             [
                 UnprotectedTier("/dev/md127", "/dev/disk/by-id/d0", 2),
                 ProtectedMirror("/dev/md126", "/dev/disk/by-id/d1", "/dev/disk/by-id/d2", 2),
@@ -91,7 +91,7 @@ public class ExpansionOptionsPlannerTests
         // offered disk is far too small to grow the existing tier's segment, and it's too small
         // even to clear its own GPT/alignment reservation for a brand-new JBOD tier -- there is
         // genuinely no plan that does anything useful with it.
-        var pool = new ExistingPoolState("diskweaver-pool", "data",
+        var pool = new ExistingPoolState("diskweaver-pool", ["data"],
             [ProtectedMirror("/dev/md127", "/dev/disk/by-id/d0", "/dev/disk/by-id/d1", 4)]);
         var tinyDisk = new Disk("/dev/disk/by-id/d2", (long)(PartitionLayout.TotalReservedBytesPerDisk * 1.5));
         var newDisks = new[] { tinyDisk };
@@ -110,7 +110,7 @@ public class ExpansionOptionsPlannerTests
         // work to do (nothing's degraded), so this falls to the pool-wide redundancy-upgrade
         // fallback. Only one existing tier is involved, so growing it to a 3-way mirror is a plain
         // grow candidate, not a merge conflict.
-        var pool = new ExistingPoolState("diskweaver-pool", "data",
+        var pool = new ExistingPoolState("diskweaver-pool", ["data"],
             [ProtectedMirror("/dev/md127", "/dev/disk/by-id/d0", "/dev/disk/by-id/d1", 2)]);
         var newDisks = new[] { NewDisk("d2", 2) };
         var allDisks = new[] { NewDisk("d0", 2), NewDisk("d1", 2), NewDisk("d2", 2) };
@@ -135,7 +135,7 @@ public class ExpansionOptionsPlannerTests
         // real 0->1 (or 1->2) increase on something that already existed should ever be offered as
         // the protection candidate -- matching how this HHR model would only ever surface a
         // protection upgrade when it's a genuine increase.
-        var pool = new ExistingPoolState("diskweaver-pool", "data",
+        var pool = new ExistingPoolState("diskweaver-pool", ["data"],
             [ProtectedRaid5("/dev/md127", ["/dev/disk/by-id/d0", "/dev/disk/by-id/d1", "/dev/disk/by-id/d2"], 2)]);
         var newDisks = new[] { NewDisk("d3", 4), NewDisk("d4", 4) };
         var allDisks = new[] { NewDisk("d0", 2), NewDisk("d1", 2), NewDisk("d2", 2), NewDisk("d3", 4), NewDisk("d4", 4) };
@@ -152,7 +152,7 @@ public class ExpansionOptionsPlannerTests
         // Real incident this generalizes: 2 independent JBOD tiers can't be merged into one shared
         // Dwr1 tier without a rebuild (no mdadm "merge two arrays" operation) -- the protection
         // option should simply be absent, not throw.
-        var pool = new ExistingPoolState("diskweaver-pool", "data",
+        var pool = new ExistingPoolState("diskweaver-pool", ["data"],
             [
                 UnprotectedTier("/dev/md127", "/dev/disk/by-id/d0", 2),
                 UnprotectedTier("/dev/md126", "/dev/disk/by-id/d1", 2),

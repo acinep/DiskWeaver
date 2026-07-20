@@ -76,7 +76,7 @@ public sealed class ExecutionPlanCache
                 .OrderBy(t => t.ArrayDevice, StringComparer.Ordinal)
                 .Select(t => $"{t.ArrayDevice}:{t.RaidLevel}:{t.SegmentSizeBytes}:"
                     + string.Join(",", t.DiskIds.OrderBy(id => id, StringComparer.Ordinal))));
-        var hash = SHA256.HashData(Encoding.UTF8.GetBytes($"{pool.PoolName};{pool.VolumeName};{tiers}"));
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes($"{pool.PoolName};{string.Join(",", pool.VolumeNames)};{tiers}"));
         return Convert.ToHexStringLower(hash)[..16];
     }
 

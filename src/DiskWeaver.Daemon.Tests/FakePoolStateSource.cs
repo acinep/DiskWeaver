@@ -19,7 +19,7 @@ public sealed class FakePoolStateSource : IPoolStateSource
     [
         new ExistingPoolState(
             "diskweaver-pool",
-            "data",
+            ["data"],
             [
                 new ExistingTier(
                     "/dev/md/diskweaver-tier0",

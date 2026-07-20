@@ -27,6 +27,22 @@ public class CommandPlannerTeardownTests
     }
 
     [Fact]
+    public void ThinProvisioned_RemovesTheThinVolumeBeforeTheThinPoolBeforeTheVg()
+    {
+        var poolPlan = TieringPlanner.Plan(
+            Disks(("/dev/loop0", 2), ("/dev/loop1", 2)), RedundancyLevel.Dwr1);
+        var steps = CommandPlanner.BuildTeardown(poolPlan, thinProvisioned: true).Steps.ToList();
+
+        var dataRemove = steps.FindIndex(s => s.Command == "lvremove" && s.Arguments.Contains("diskweaver-pool/data"));
+        var thinPoolRemove = steps.FindIndex(s => s.Command == "lvremove" && s.Arguments.Contains("diskweaver-pool/diskweaver-pool-thin-pool"));
+        var vgremove = steps.FindIndex(s => s.Command == "vgremove");
+
+        Assert.True(dataRemove >= 0 && thinPoolRemove >= 0);
+        Assert.True(dataRemove < thinPoolRemove, "the thin volume must be removed before its thin pool");
+        Assert.True(thinPoolRemove < vgremove, "every LV must be removed before the VG itself");
+    }
+
+    [Fact]
     public void LvremoveAndVgremove_AreForced_NoInteractivePrompt()
     {
         // A script running non-interactively can't answer lvm's "Do you really want to..."
