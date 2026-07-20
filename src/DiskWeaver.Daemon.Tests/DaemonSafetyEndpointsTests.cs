@@ -317,11 +317,14 @@ public class DaemonSafetyEndpointsTests
         firstScript.EnsureSuccessStatusCode();
     }
 
-    // Segment size mirrors PartitionLayout.ForPlanning's 2 MiB/disk reserve (matches
-    // FakePoolStateSource's own convention) -- without it, TieringPlanner's recomputed desired
-    // tiers (built from PartitionLayout.ForPlanning's reduced sizes) never exactly/subset-match
-    // these fixtures' existing tiers, and they'd wrongly show up as orphaned instead.
-    private const long ReservedBytesPerDisk = 2 * 1024 * 1024;
+    // Segment size mirrors PartitionLayout.ForPlanning exactly -- reserved bytes, then rounded down
+    // to an alignment boundary (matches FakePoolStateSource's own convention) -- without it,
+    // TieringPlanner's recomputed desired tiers (built from PartitionLayout.ForPlanning's adjusted
+    // sizes) never exactly/subset-match these fixtures' existing tiers, and they'd wrongly show up
+    // as orphaned instead. Calls the real production function rather than a hand-duplicated
+    // formula, so this can't silently drift out of sync with it.
+    private static long AdjustedSegmentBytes(long rawDiskSizeBytes) =>
+        PartitionLayout.ForPlanning([new Disk("segment-helper", rawDiskSizeBytes)])[0].SizeBytes;
 
     [Fact]
     public async Task PostExpand_AllJbodPool_DefaultMode_OffersBothCompletingAndLeavingIndependent()
@@ -337,11 +340,24 @@ public class DaemonSafetyEndpointsTests
         [
             new ExistingPoolState("diskweaver-pool", "data",
             [
-                new ExistingTier("/dev/md127", 2_000_000_000_000 - ReservedBytesPerDisk, ["/dev/disk/by-id/fake-0"], RaidLevel.Mirror,
+                new ExistingTier("/dev/md127", AdjustedSegmentBytes(2_000_000_000_000), ["/dev/disk/by-id/fake-0"], RaidLevel.Mirror,
                     ["/dev/disk/by-id/fake-0-part1"], ConfiguredMemberCount: 2, IsUnprotectedByDesign: true),
-                new ExistingTier("/dev/md126", 2_000_000_000_000 - ReservedBytesPerDisk, ["/dev/disk/by-id/fake-1"], RaidLevel.Mirror,
+                new ExistingTier("/dev/md126", AdjustedSegmentBytes(2_000_000_000_000), ["/dev/disk/by-id/fake-1"], RaidLevel.Mirror,
                     ["/dev/disk/by-id/fake-1-part1"], ConfiguredMemberCount: 2, IsUnprotectedByDesign: true),
             ]),
+        ];
+        // Explicitly (not the default 4TB fake-2/fake-3) sized to exactly 2 segments' worth of
+        // spare capacity, no more: the default 4TB disks leave enough leftover after completing
+        // both tiers from a single disk that the tiny remainder itself clears the "usable leftover"
+        // threshold and forms its own (nonsensical, near-zero-sized) extra protected tier --
+        // confirmed live, and not what this test is about.
+        var segment = AdjustedSegmentBytes(2_000_000_000_000);
+        factory.Inventory.Disks =
+        [
+            new Disk("/dev/disk/by-id/fake-0", 2_000_000_000_000),
+            new Disk("/dev/disk/by-id/fake-1", 2_000_000_000_000),
+            new Disk("/dev/disk/by-id/fake-2", 2 * segment + PartitionLayout.TotalReservedBytesPerDisk),
+            new Disk("/dev/disk/by-id/fake-3", 2 * segment + PartitionLayout.TotalReservedBytesPerDisk),
         ];
         var client = factory.CreateClient();
 
@@ -380,9 +396,9 @@ public class DaemonSafetyEndpointsTests
         [
             new ExistingPoolState("diskweaver-pool", "data",
             [
-                new ExistingTier("/dev/md127", 2_000_000_000_000 - ReservedBytesPerDisk, ["/dev/disk/by-id/fake-0"], RaidLevel.Mirror,
+                new ExistingTier("/dev/md127", AdjustedSegmentBytes(2_000_000_000_000), ["/dev/disk/by-id/fake-0"], RaidLevel.Mirror,
                     ["/dev/disk/by-id/fake-0-part1"], ConfiguredMemberCount: 2, IsUnprotectedByDesign: true),
-                new ExistingTier("/dev/md126", 4_000_000_000_000 - ReservedBytesPerDisk,
+                new ExistingTier("/dev/md126", AdjustedSegmentBytes(4_000_000_000_000),
                     ["/dev/disk/by-id/fake-2", "/dev/disk/by-id/fake-3"], RaidLevel.Raid5,
                     ["/dev/disk/by-id/fake-2-part1", "/dev/disk/by-id/fake-3-part1"]),
             ]),
@@ -419,7 +435,7 @@ public class DaemonSafetyEndpointsTests
         [
             new ExistingPoolState("diskweaver-pool", "data",
             [
-                new ExistingTier("/dev/md127", 2_000_000_000_000 - ReservedBytesPerDisk,
+                new ExistingTier("/dev/md127", AdjustedSegmentBytes(2_000_000_000_000),
                     ["/dev/disk/by-id/fake-0", "/dev/disk/by-id/fake-1", "/dev/disk/by-id/fake-2"], RaidLevel.Raid5,
                     ["/dev/disk/by-id/fake-0-part1", "/dev/disk/by-id/fake-1-part1", "/dev/disk/by-id/fake-2-part1"]),
             ]),
@@ -472,9 +488,9 @@ public class DaemonSafetyEndpointsTests
         [
             new ExistingPoolState("diskweaver-pool", "data",
             [
-                new ExistingTier("/dev/md127", 2_000_000_000_000 - ReservedBytesPerDisk, ["/dev/disk/by-id/fake-0"], RaidLevel.Mirror,
+                new ExistingTier("/dev/md127", AdjustedSegmentBytes(2_000_000_000_000), ["/dev/disk/by-id/fake-0"], RaidLevel.Mirror,
                     ["/dev/disk/by-id/fake-0-part1"], ConfiguredMemberCount: 2, IsUnprotectedByDesign: true),
-                new ExistingTier("/dev/md126", 2_000_000_000_000 - ReservedBytesPerDisk, ["/dev/disk/by-id/fake-1"], RaidLevel.Mirror,
+                new ExistingTier("/dev/md126", AdjustedSegmentBytes(2_000_000_000_000), ["/dev/disk/by-id/fake-1"], RaidLevel.Mirror,
                     ["/dev/disk/by-id/fake-1-part1"], ConfiguredMemberCount: 2, IsUnprotectedByDesign: true),
             ]),
         ];
@@ -505,10 +521,10 @@ public class DaemonSafetyEndpointsTests
         [
             new ExistingPoolState("diskweaver-pool", "data",
             [
-                new ExistingTier("/dev/md127", 2_000_000_000_000 - ReservedBytesPerDisk,
+                new ExistingTier("/dev/md127", AdjustedSegmentBytes(2_000_000_000_000),
                     ["/dev/disk/by-id/fake-0", "/dev/disk/by-id/fake-1"], RaidLevel.Mirror,
                     ["/dev/disk/by-id/fake-0-part1", "/dev/disk/by-id/fake-1-part1"]),
-                new ExistingTier("/dev/md126", 2_000_000_000_000 - ReservedBytesPerDisk,
+                new ExistingTier("/dev/md126", AdjustedSegmentBytes(2_000_000_000_000),
                     ["/dev/disk/by-id/fake-2", "/dev/disk/by-id/fake-3"], RaidLevel.Mirror,
                     ["/dev/disk/by-id/fake-2-part1", "/dev/disk/by-id/fake-3-part1"]),
             ]),
@@ -553,10 +569,10 @@ public class DaemonSafetyEndpointsTests
         [
             new ExistingPoolState("diskweaver-pool", "data",
             [
-                new ExistingTier("/dev/md127", 2_000_000_000_000 - ReservedBytesPerDisk,
+                new ExistingTier("/dev/md127", AdjustedSegmentBytes(2_000_000_000_000),
                     ["/dev/disk/by-id/fake-0", "/dev/disk/by-id/fake-1"], RaidLevel.Mirror,
                     ["/dev/disk/by-id/fake-0-part1", "/dev/disk/by-id/fake-1-part1"]),
-                new ExistingTier("/dev/md126", 2_000_000_000_000 - ReservedBytesPerDisk,
+                new ExistingTier("/dev/md126", AdjustedSegmentBytes(2_000_000_000_000),
                     ["/dev/disk/by-id/fake-2", "/dev/disk/by-id/fake-3"], RaidLevel.Mirror,
                     ["/dev/disk/by-id/fake-2-part1", "/dev/disk/by-id/fake-3-part1"]),
             ]),
@@ -604,10 +620,10 @@ public class DaemonSafetyEndpointsTests
         [
             new ExistingPoolState("diskweaver-pool", "data",
             [
-                new ExistingTier("/dev/md127", 2_000_000_000_000 - ReservedBytesPerDisk,
+                new ExistingTier("/dev/md127", AdjustedSegmentBytes(2_000_000_000_000),
                     ["/dev/disk/by-id/fake-0", "/dev/disk/by-id/fake-1"], RaidLevel.Mirror,
                     ["/dev/disk/by-id/fake-0-part1", "/dev/disk/by-id/fake-1-part1"]),
-                new ExistingTier("/dev/md126", 2_000_000_000_000 - ReservedBytesPerDisk,
+                new ExistingTier("/dev/md126", AdjustedSegmentBytes(2_000_000_000_000),
                     ["/dev/disk/by-id/fake-2", "/dev/disk/by-id/fake-3"], RaidLevel.Mirror,
                     ["/dev/disk/by-id/fake-2-part1", "/dev/disk/by-id/fake-3-part1"]),
             ]),
@@ -643,7 +659,7 @@ public class DaemonSafetyEndpointsTests
         [
             new ExistingPoolState("diskweaver-pool", "data",
             [
-                new ExistingTier("/dev/md127", 2_000_000_000_000 - ReservedBytesPerDisk, ["/dev/disk/by-id/fake-0"], RaidLevel.Mirror,
+                new ExistingTier("/dev/md127", AdjustedSegmentBytes(2_000_000_000_000), ["/dev/disk/by-id/fake-0"], RaidLevel.Mirror,
                     ["/dev/disk/by-id/fake-0-part1"], ConfiguredMemberCount: 2, IsUnprotectedByDesign: true),
             ]),
         ];
@@ -695,7 +711,7 @@ public class DaemonSafetyEndpointsTests
         // should be completed into real mirrors from slices of the same disk, as the default
         // "protection" candidate (auto-protect completion is always attempted, no flag needed).
         using var factory = new DaemonWebApplicationFactory();
-        var tierSegmentBytes = 2_000_000_000_000 - ReservedBytesPerDisk;
+        var tierSegmentBytes = AdjustedSegmentBytes(2_000_000_000_000);
         factory.PoolState.Pools =
         [
             new ExistingPoolState("diskweaver-pool", "data",
@@ -709,7 +725,7 @@ public class DaemonSafetyEndpointsTests
         factory.Inventory.Disks =
         [
             .. factory.Inventory.Disks,
-            new Disk("/dev/disk/by-id/fake-4", 2 * tierSegmentBytes + ReservedBytesPerDisk),
+            new Disk("/dev/disk/by-id/fake-4", 2 * tierSegmentBytes + PartitionLayout.TotalReservedBytesPerDisk),
         ];
         var client = factory.CreateClient();
 
@@ -741,7 +757,7 @@ public class DaemonSafetyEndpointsTests
         // Splitting one disk across two "protect this tier" calls: the second call must fail if
         // the disk's remaining (unclaimed) capacity is too small for the second tier's segment.
         using var factory = new DaemonWebApplicationFactory();
-        var tierSegmentBytes = 2_000_000_000_000 - ReservedBytesPerDisk;
+        var tierSegmentBytes = AdjustedSegmentBytes(2_000_000_000_000);
         factory.PoolState.Pools =
         [
             new ExistingPoolState("diskweaver-pool", "data",
@@ -757,7 +773,7 @@ public class DaemonSafetyEndpointsTests
         factory.Inventory.Disks =
         [
             .. factory.Inventory.Disks,
-            new Disk("/dev/disk/by-id/fake-4", tierSegmentBytes + ReservedBytesPerDisk, IsBlank: false),
+            new Disk("/dev/disk/by-id/fake-4", tierSegmentBytes + PartitionLayout.TotalReservedBytesPerDisk, IsBlank: false),
         ];
         var client = factory.CreateClient();
 

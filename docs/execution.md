@@ -44,6 +44,34 @@ For each disk, partitions are created sequentially starting at a 1MiB
 aligned offset (GPT + alignment reserve). For each tier (in boundary
 order):
 
+**Every partition boundary is 1MiB-aligned, not just the first.**
+`PartitionLayout.ForPlanning` rounds each disk's adjusted size (after
+subtracting `TotalReservedBytesPerDisk`) *down* to a `StartAlignmentBytes`
+(1 MiB) multiple, before `TieringPlanner.Plan` buckets disks into
+boundaries by that adjusted size. Real disks' raw manufacturer byte
+counts are essentially never themselves a round 1MiB multiple, so
+without this, only the very first partition on a disk (which always
+starts at exactly `StartAlignmentBytes` by construction) ended up
+aligned — every later partition's start was wherever the previous
+tier's unrounded byte size happened to end, which `parted` then flags:
+`Warning: The resulting partition is not properly aligned for best
+performance`. Confirmed live. Costs at most just under 1 MiB of usable
+capacity per disk.
+
+**This changes a tier's exact `SegmentSizeBytes` slightly** — which
+matters because `BuildIncremental`'s `ClassifyIncremental` matches an
+existing tier to a freshly-recomputed desired tier by *exact*
+`SegmentSizeBytes` equality (not "close enough"). A pool built before
+this rounding existed has segment sizes that won't exactly match a
+post-fix recompute, so expanding it will fail with "existing tier(s)
+don't correspond to any tier in the new plan" even though nothing is
+actually wrong — a full teardown + rebuild is required first to get
+segment sizes consistent with the new alignment. This is an inherent
+consequence of `ClassifyIncremental`'s exact-match design (not unique
+to this change — any future refinement of `PartitionLayout`'s math
+would hit the same wall for already-built pools), just the first
+change to actually trigger it in practice.
+
 1. First time a disk is touched: `parted --script <disk> mklabel gpt`.
 2. `parted --script <disk> unit B mkpart primary <start> <end>` for that
    disk's slice of the tier, followed by `partprobe <disk>` (see below).

@@ -20,11 +20,14 @@ public class CommandPlannerHypotheticalRebuildTests
 
         var hypothetical = CommandPlanner.HypotheticalFullRebuildCapacityBytes(allDisks, RedundancyLevel.Dwr1);
 
-        // Segment (0,2]: all 5 disks -> RAID5, (5-1)*(2TB - reservation) = ~8TB.
-        // Segment (2,4]: the three 4TB disks -> RAID5, (3-1)*2TB = 4TB (reservation already paid
-        // for by the first segment, since PartitionLayout.ForPlanning subtracts it once per disk).
-        var reserved = PartitionLayout.TotalReservedBytesPerDisk;
-        Assert.Equal(4 * (2 * Tb - reserved) + 2 * (2 * Tb), hypothetical);
+        // A full from-scratch rebuild at Dwr1 across all 5 disks -- computed via the same
+        // ForPlanning+Plan pipeline HypotheticalFullRebuildCapacityBytes itself uses (see
+        // MatchesTieringPlannerDirectly_ForASingleFreshBuild below), rather than a hand-derived
+        // formula that would have to independently track PartitionLayout's reservation/alignment
+        // rounding (each disk size rounds down to its own alignment boundary, so per-disk
+        // remainders aren't simply additive across differently-sized disks).
+        var expected = TieringPlanner.Plan(PartitionLayout.ForPlanning(allDisks), RedundancyLevel.Dwr1).PoolCapacityBytes;
+        Assert.Equal(expected, hypothetical);
 
         var incrementalTotal = 2 * Tb + 2 * Tb + 4 * Tb; // 3 independent 2-disk mirrors, no shared parity
         Assert.True(hypothetical > incrementalTotal);

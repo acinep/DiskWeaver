@@ -5,22 +5,28 @@ namespace DiskWeaver.Executor.Tests;
 public class ExpansionOptionsPlannerTests
 {
     private const long Tb = 1_000_000_000_000L;
-    private const long ReservedBytesPerDisk = 2 * 1024 * 1024;
 
     private static Disk NewDisk(string id, long sizeTb) => new($"/dev/disk/by-id/{id}", sizeTb * Tb);
 
     private static string[] PartitionPaths(params string[] diskIds) =>
         diskIds.Select(id => PartitionNaming.ToPartitionPath(id, 1)).ToArray();
 
+    // Every tier constructed by the helpers below is a pool's bottom tier (segment size = a single
+    // disk's own adjusted size, boundary - 0) -- so this is the real production adjustment
+    // (PartitionLayout.ForPlanning: reserved bytes, then rounded down to an alignment boundary),
+    // not a hand-duplicated formula that would silently drift out of sync with it.
+    private static long AdjustedSegmentBytes(long sizeTb) =>
+        PartitionLayout.ForPlanning([new Disk("segment-helper", sizeTb * Tb)])[0].SizeBytes;
+
     private static ExistingTier UnprotectedTier(string arrayDevice, string diskId, long segmentTb) =>
-        new(arrayDevice, segmentTb * Tb - ReservedBytesPerDisk, [diskId], RaidLevel.Mirror,
+        new(arrayDevice, AdjustedSegmentBytes(segmentTb), [diskId], RaidLevel.Mirror,
             PartitionPaths(diskId), ConfiguredMemberCount: 2, IsUnprotectedByDesign: true);
 
     private static ExistingTier ProtectedMirror(string arrayDevice, string d0, string d1, long segmentTb) =>
-        new(arrayDevice, segmentTb * Tb - ReservedBytesPerDisk, [d0, d1], RaidLevel.Mirror, PartitionPaths(d0, d1));
+        new(arrayDevice, AdjustedSegmentBytes(segmentTb), [d0, d1], RaidLevel.Mirror, PartitionPaths(d0, d1));
 
     private static ExistingTier ProtectedRaid5(string arrayDevice, string[] diskIds, long segmentTb) =>
-        new(arrayDevice, segmentTb * Tb - ReservedBytesPerDisk, diskIds, RaidLevel.Raid5, PartitionPaths(diskIds));
+        new(arrayDevice, AdjustedSegmentBytes(segmentTb), diskIds, RaidLevel.Raid5, PartitionPaths(diskIds));
 
     [Fact]
     public void ProtectionOnly_CompletingADegradedTier_AddsNoCapacity_SoNoSpaceOption()
@@ -55,7 +61,7 @@ public class ExpansionOptionsPlannerTests
         Assert.Null(options.Protection);
         Assert.NotNull(options.Space);
         Assert.Equal(ExpansionOptionsPlanner.SpaceIntent, options.Space!.Intent);
-        Assert.True(options.Space.AchievedCapacityBytes > 2 * Tb - ReservedBytesPerDisk);
+        Assert.True(options.Space.AchievedCapacityBytes > AdjustedSegmentBytes(2));
     }
 
     [Fact]
