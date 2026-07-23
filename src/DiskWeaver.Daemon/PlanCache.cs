@@ -20,10 +20,11 @@ public sealed class PlanCache
 
     public string Store(
         IReadOnlyList<Disk> selectedDisks, RedundancyLevel redundancy, string poolName, PoolPlan plan,
-        bool thinProvisioned = false, bool assumeClean = false, int chunkSizeKb = Executor.CommandPlanner.DefaultChunkSizeKb)
+        bool thinProvisioned = false, bool assumeClean = false, int chunkSizeKb = Executor.CommandPlanner.DefaultChunkSizeKb,
+        Executor.Raid5ConsistencyPolicy raid5ConsistencyPolicy = Executor.Raid5ConsistencyPolicy.Bitmap)
     {
-        var id = ComputeId(selectedDisks, redundancy, poolName, thinProvisioned, assumeClean, chunkSizeKb);
-        _plans[id] = new CachedPlan(plan, selectedDisks, poolName, thinProvisioned, assumeClean, chunkSizeKb);
+        var id = ComputeId(selectedDisks, redundancy, poolName, thinProvisioned, assumeClean, chunkSizeKb, raid5ConsistencyPolicy);
+        _plans[id] = new CachedPlan(plan, selectedDisks, poolName, thinProvisioned, assumeClean, chunkSizeKb, raid5ConsistencyPolicy);
         return id;
     }
 
@@ -99,19 +100,34 @@ public sealed class PlanCache
         return found;
     }
 
+    /// <summary>
+    /// The RAID5 write-hole handling (<c>resync</c>/<c>bitmap</c>/<c>ppl</c>) <c>POST /plan</c>
+    /// requested (see <see cref="Executor.Raid5ConsistencyPolicy"/>) -- so <c>/plan/{id}/script</c>
+    /// and <c>/plan/{id}/execute</c> build the same layout <c>POST /plan</c> actually described,
+    /// instead of silently falling back to the default.
+    /// </summary>
+    public bool TryGetRaid5ConsistencyPolicy(string id, out Executor.Raid5ConsistencyPolicy raid5ConsistencyPolicy)
+    {
+        var found = _plans.TryGetValue(id, out var cached);
+        raid5ConsistencyPolicy = cached?.Raid5ConsistencyPolicy ?? Executor.Raid5ConsistencyPolicy.Bitmap;
+        return found;
+    }
+
     private sealed record CachedPlan(
         PoolPlan Plan, IReadOnlyList<Disk> SelectedDisks, string PoolName, bool ThinProvisioned, bool AssumeClean,
-        int ChunkSizeKb);
+        int ChunkSizeKb, Executor.Raid5ConsistencyPolicy Raid5ConsistencyPolicy);
 
     private static string ComputeId(
         IReadOnlyList<Disk> disks, RedundancyLevel redundancy, string poolName, bool thinProvisioned, bool assumeClean,
-        int chunkSizeKb)
+        int chunkSizeKb, Executor.Raid5ConsistencyPolicy raid5ConsistencyPolicy)
     {
         var canonical = string.Join(
             ";",
             disks.OrderBy(d => d.Id, StringComparer.Ordinal).Select(d => $"{d.Id}:{d.SizeBytes}"));
         var hash = SHA256.HashData(
-            Encoding.UTF8.GetBytes($"{canonical};R={redundancy};P={poolName};T={thinProvisioned};A={assumeClean};C={chunkSizeKb}"));
+            Encoding.UTF8.GetBytes(
+                $"{canonical};R={redundancy};P={poolName};T={thinProvisioned};A={assumeClean};C={chunkSizeKb};"
+                + $"Q={raid5ConsistencyPolicy}"));
         return Convert.ToHexStringLower(hash)[..16];
     }
 }

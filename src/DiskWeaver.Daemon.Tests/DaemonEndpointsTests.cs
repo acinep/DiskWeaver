@@ -399,6 +399,55 @@ public class DaemonEndpointsTests : IClassFixture<DaemonWebApplicationFactory>
     }
 
     [Fact]
+    public async Task GetPlanScript_Raid5ConsistencyPolicy_DefaultsToBitmap()
+    {
+        var planResponse = await _client.PostAsJsonAsync(
+            "/plan", new PlanRequest(["fake-0", "fake-1", "fake-2"], "dwr1", "test-new-pool"));
+        var plan = await planResponse.Content.ReadFromJsonAsync<PlanResponse>();
+
+        var script = await _client.GetStringAsync($"/plan/{plan!.Id}/script");
+
+        Assert.Contains("--bitmap=internal", script);
+        Assert.DoesNotContain("--consistency-policy", script);
+    }
+
+    [Fact]
+    public async Task GetPlanScript_Raid5ConsistencyPolicyPpl_AppliesToRaid5Tier()
+    {
+        // fake-0/1/2 (2TB, 2TB, 4TB) at dwr1 forms a RAID5 (striped) tier, unlike a 2-disk mirror.
+        var planResponse = await _client.PostAsJsonAsync(
+            "/plan", new PlanRequest(["fake-0", "fake-1", "fake-2"], "dwr1", "test-new-pool", Raid5ConsistencyPolicy: "ppl"));
+        var plan = await planResponse.Content.ReadFromJsonAsync<PlanResponse>();
+
+        var script = await _client.GetStringAsync($"/plan/{plan!.Id}/script");
+
+        Assert.Contains("--consistency-policy=ppl", script);
+    }
+
+    [Fact]
+    public async Task PostPlan_InvalidRaid5ConsistencyPolicy_ReturnsBadRequest()
+    {
+        var response = await _client.PostAsJsonAsync(
+            "/plan", new PlanRequest(["fake-0", "fake-1"], "dwr1", "test-new-pool", Raid5ConsistencyPolicy: "yolo"));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task SameDisksAndPoolName_DifferentRaid5ConsistencyPolicy_ProduceDifferentPlanIds()
+    {
+        var bitmap = await _client.PostAsJsonAsync(
+            "/plan", new PlanRequest(["fake-0", "fake-1"], "dwr1", "test-new-pool", Raid5ConsistencyPolicy: "bitmap"));
+        var ppl = await _client.PostAsJsonAsync(
+            "/plan", new PlanRequest(["fake-0", "fake-1"], "dwr1", "test-new-pool", Raid5ConsistencyPolicy: "ppl"));
+
+        var bitmapBody = await bitmap.Content.ReadFromJsonAsync<PlanResponse>();
+        var pplBody = await ppl.Content.ReadFromJsonAsync<PlanResponse>();
+
+        Assert.NotEqual(bitmapBody!.Id, pplBody!.Id);
+    }
+
+    [Fact]
     public async Task GetPlanScript_Teardown_ReturnsTeardownScript()
     {
         var planResponse = await _client.PostAsJsonAsync(

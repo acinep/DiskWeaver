@@ -5,7 +5,7 @@ using DiskWeaver.Planner;
 namespace DiskWeaver.Cli;
 
 /// <summary>
-/// Implements `diskweaver plan --redundancy ... --disks ... [--lsblk-json <file> | --lsblk] [--script <file>] [--assume-clean] [--chunk-size <64|128|256|512>]`.
+/// Implements `diskweaver plan --redundancy ... --disks ... [--lsblk-json <file> | --lsblk] [--script <file>] [--assume-clean] [--chunk-size <64|128|256|512>] [--raid5-consistency-policy <resync|bitmap|ppl>]`.
 /// <c>--assume-clean</c> (only affects <c>--script</c>) runs each tier's <c>mdadm --create</c> with
 /// <c>--assume-clean</c>, skipping the initial full-array resync/parity-build -- see
 /// <see cref="Executor.CommandPlanner.Build"/>'s <c>assumeClean</c> parameter for why that's safe
@@ -13,6 +13,9 @@ namespace DiskWeaver.Cli;
 /// <c>--chunk-size</c> (only affects <c>--script</c>, KiB, default
 /// <see cref="Executor.CommandPlanner.DefaultChunkSizeKb"/>) sets the striped (RAID5/RAID6) tier
 /// chunk size -- see <see cref="Executor.CommandPlanner.Build"/>'s <c>chunkSizeKb</c> parameter.
+/// <c>--raid5-consistency-policy</c> (only affects <c>--script</c>, default <c>bitmap</c>) sets how
+/// a RAID5 tier protects against the write hole -- see <see cref="Executor.Raid5ConsistencyPolicy"/>
+/// for the perf-vs-safety trade-off between resync/bitmap/ppl; ignored for Mirror/RAID6 tiers.
 /// <c>--disks</c> is always required and always means "the exact disks to plan for" -- there is
 /// no mode where omitting it falls back to "use everything found". Without an inventory source
 /// it's a list of raw sizes (--disks 2TB,2TB,4TB); with --lsblk-json/--lsblk it's the disk
@@ -31,6 +34,8 @@ public static class PlanCommand
         var assumeClean = false;
         var chunkSizeKb = CommandPlanner.DefaultChunkSizeKb;
         string? chunkSizeArg = null;
+        var raid5ConsistencyPolicy = Raid5ConsistencyPolicy.Bitmap;
+        string? raid5ConsistencyPolicyArg = null;
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -60,6 +65,9 @@ public static class PlanCommand
                 case "--chunk-size" when i + 1 < args.Length:
                     chunkSizeArg = args[++i];
                     break;
+                case "--raid5-consistency-policy" when i + 1 < args.Length:
+                    raid5ConsistencyPolicyArg = args[++i];
+                    break;
             }
         }
 
@@ -74,13 +82,34 @@ public static class PlanCommand
             }
         }
 
+        if (raid5ConsistencyPolicyArg is not null)
+        {
+            switch (raid5ConsistencyPolicyArg.Trim().ToLowerInvariant())
+            {
+                case "resync":
+                    raid5ConsistencyPolicy = Raid5ConsistencyPolicy.Resync;
+                    break;
+                case "bitmap":
+                    raid5ConsistencyPolicy = Raid5ConsistencyPolicy.Bitmap;
+                    break;
+                case "ppl":
+                    raid5ConsistencyPolicy = Raid5ConsistencyPolicy.Ppl;
+                    break;
+                default:
+                    Console.Error.WriteLine(
+                        $"Unsupported --raid5-consistency-policy '{raid5ConsistencyPolicyArg}' -- use one of: resync, bitmap, ppl.");
+                    return 1;
+            }
+        }
+
         var inventorySourceCount = new[] { lsblkJsonPath is not null, useLiveLsblk }.Count(b => b);
 
         if (redundancyArg is null || disksArg is null || inventorySourceCount > 1)
         {
             Console.Error.WriteLine(
                 "Usage: diskweaver plan --redundancy <none|dwr1|dwr2> --disks <size,size,... | name,name,...> "
-                + "[--lsblk-json <file> | --lsblk] [--script <file>] [--assume-clean] [--chunk-size <64|128|256|512>]");
+                + "[--lsblk-json <file> | --lsblk] [--script <file>] [--assume-clean] [--chunk-size <64|128|256|512>] "
+                + "[--raid5-consistency-policy <resync|bitmap|ppl>]");
             Console.Error.WriteLine("Example: diskweaver plan --redundancy dwr1 --disks 2TB,2TB,4TB,4TB,4TB");
             Console.Error.WriteLine(
                 "Example: diskweaver plan --redundancy dwr1 --lsblk-json inventory.json --disks loop0,loop1,loop2,loop3");
@@ -153,7 +182,8 @@ public static class PlanCommand
 
         if (scriptOutputPath is not null)
         {
-            var executionPlan = CommandPlanner.Build(plan, assumeClean: assumeClean, chunkSizeKb: chunkSizeKb);
+            var executionPlan = CommandPlanner.Build(
+                plan, assumeClean: assumeClean, chunkSizeKb: chunkSizeKb, raid5ConsistencyPolicy: raid5ConsistencyPolicy);
             var script = ShellScriptEmitter.Render(executionPlan);
             File.WriteAllText(scriptOutputPath, script);
             Console.WriteLine();

@@ -205,6 +205,12 @@ app.MapPost("/plan", (PlanRequest request, IDiskInventorySource inventory, IPool
             + $"{string.Join(", ", CommandPlanner.ValidChunkSizesKb)}.");
     }
 
+    if (!TryParseRaid5ConsistencyPolicy(request.Raid5ConsistencyPolicy, out var raid5ConsistencyPolicy))
+    {
+        return TextError(StatusCodes.Status400BadRequest,
+            $"Unknown raid5ConsistencyPolicy '{request.Raid5ConsistencyPolicy}'. Use resync, bitmap, or ppl.");
+    }
+
     if (poolState.GetPools().Any(p => p.PoolName == poolName))
     {
         return TextError(StatusCodes.Status400BadRequest,
@@ -238,7 +244,8 @@ app.MapPost("/plan", (PlanRequest request, IDiskInventorySource inventory, IPool
     }
 
     var id = cache.Store(
-        selectedDisks, redundancy, poolName, plan, request.ThinProvisioned, request.AssumeClean, request.ChunkSizeKb);
+        selectedDisks, redundancy, poolName, plan, request.ThinProvisioned, request.AssumeClean, request.ChunkSizeKb,
+        raid5ConsistencyPolicy);
     return Results.Ok(new PlanResponse(id, plan));
 });
 
@@ -252,9 +259,12 @@ app.MapGet("/plan/{id}/script", (string id, string? kind, PlanCache cache) =>
     cache.TryGetThinProvisioned(id, out var thinProvisioned);
     cache.TryGetAssumeClean(id, out var assumeClean);
     cache.TryGetChunkSizeKb(id, out var chunkSizeKb);
+    cache.TryGetRaid5ConsistencyPolicy(id, out var raid5ConsistencyPolicy);
     var executionPlan = string.Equals(kind, "teardown", StringComparison.OrdinalIgnoreCase)
         ? CommandPlanner.BuildTeardown(plan, poolName!, thinProvisioned: thinProvisioned)
-        : CommandPlanner.Build(plan, poolName!, thinProvisioned: thinProvisioned, assumeClean: assumeClean, chunkSizeKb: chunkSizeKb);
+        : CommandPlanner.Build(
+            plan, poolName!, thinProvisioned: thinProvisioned, assumeClean: assumeClean, chunkSizeKb: chunkSizeKb,
+            raid5ConsistencyPolicy: raid5ConsistencyPolicy);
 
     return Results.Text(ShellScriptEmitter.Render(executionPlan), "text/plain");
 });
@@ -298,9 +308,12 @@ app.MapPost("/plan/{id}/execute", (
     cache.TryGetThinProvisioned(id, out var thinProvisioned);
     cache.TryGetAssumeClean(id, out var assumeClean);
     cache.TryGetChunkSizeKb(id, out var chunkSizeKb);
+    cache.TryGetRaid5ConsistencyPolicy(id, out var raid5ConsistencyPolicy);
     var executionPlan = normalizedKind == "teardown"
         ? CommandPlanner.BuildTeardown(plan, poolName!, thinProvisioned: thinProvisioned)
-        : CommandPlanner.Build(plan, poolName!, thinProvisioned: thinProvisioned, assumeClean: assumeClean, chunkSizeKb: chunkSizeKb);
+        : CommandPlanner.Build(
+            plan, poolName!, thinProvisioned: thinProvisioned, assumeClean: assumeClean, chunkSizeKb: chunkSizeKb,
+            raid5ConsistencyPolicy: raid5ConsistencyPolicy);
 
     ExecutionJournal? journal = null;
     do
@@ -388,6 +401,12 @@ app.MapPost("/pools/{poolName}/expand", (string poolName, ExpansionRequest reque
         return TextError(StatusCodes.Status400BadRequest,
             $"Unsupported chunkSizeKb {request.ChunkSizeKb} -- use one of: "
             + $"{string.Join(", ", CommandPlanner.ValidChunkSizesKb)}.");
+    }
+
+    if (!TryParseRaid5ConsistencyPolicy(request.Raid5ConsistencyPolicy, out var raid5ConsistencyPolicy))
+    {
+        return TextError(StatusCodes.Status400BadRequest,
+            $"Unknown raid5ConsistencyPolicy '{request.Raid5ConsistencyPolicy}'. Use resync, bitmap, or ppl.");
     }
 
     var candidates = new List<(string Intent, PoolPlan Desired, RedundancyLevel? AchievedRedundancy)>();
@@ -569,7 +588,8 @@ app.MapPost("/pools/{poolName}/expand", (string poolName, ExpansionRequest reque
         try
         {
             executionPlan = CommandPlanner.BuildIncremental(
-                pool, desired, assumeClean: request.AssumeClean, chunkSizeKb: request.ChunkSizeKb);
+                pool, desired, assumeClean: request.AssumeClean, chunkSizeKb: request.ChunkSizeKb,
+                raid5ConsistencyPolicy: raid5ConsistencyPolicy);
             achievedCapacityBytes = CommandPlanner.AchievedCapacityBytes(pool, desired);
         }
         catch (InvalidOperationException ex)
@@ -828,6 +848,25 @@ static bool TryParseRedundancy(string value, out RedundancyLevel redundancy)
             return true;
         default:
             redundancy = default;
+            return false;
+    }
+}
+
+static bool TryParseRaid5ConsistencyPolicy(string value, out Raid5ConsistencyPolicy raid5ConsistencyPolicy)
+{
+    switch (value.Trim().ToLowerInvariant())
+    {
+        case "resync":
+            raid5ConsistencyPolicy = Raid5ConsistencyPolicy.Resync;
+            return true;
+        case "bitmap":
+            raid5ConsistencyPolicy = Raid5ConsistencyPolicy.Bitmap;
+            return true;
+        case "ppl":
+            raid5ConsistencyPolicy = Raid5ConsistencyPolicy.Ppl;
+            return true;
+        default:
+            raid5ConsistencyPolicy = default;
             return false;
     }
 }

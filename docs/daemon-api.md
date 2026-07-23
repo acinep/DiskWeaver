@@ -34,7 +34,8 @@ already built over HTTP.
   ToDiskId` — the exact inverse of the naming `CommandPlanner` uses when
   building the array in the first place.
 - `POST /plan` → body: `{ diskIds: [...], redundancy: "none"|"dwr1"|"dwr2",
-  poolName?, thinProvisioned?, assumeClean?, chunkSizeKb? }` (optionally `{ existingPool: ... }` for
+  poolName?, thinProvisioned?, assumeClean?, chunkSizeKb?, raid5ConsistencyPolicy? }`
+  (optionally `{ existingPool: ... }` for
   the incremental path) → `thinProvisioned` (default `false`) makes the
   eventual `Build`/`BuildTeardown` create a thin pool (with headroom, see
   `CommandPlanner.ThinPoolHeadroomPercent`) plus one thin `data` volume
@@ -47,8 +48,13 @@ already built over HTTP.
   (default `CommandPlanner.DefaultChunkSizeKb`, 64) sets each striped
   (RAID5/RAID6) tier's `mdadm --create --chunk` size — must be one of
   `CommandPlanner.ValidChunkSizesKb` (64/128/256/512), `400` otherwise;
-  ignored for Mirror tiers, which don't stripe. `PlanCache` stores all
-  three alongside the plan itself, keyed into the plan id, so
+  ignored for Mirror tiers, which don't stripe. `raid5ConsistencyPolicy`
+  (`"resync"`|`"bitmap"`|`"ppl"`, case-insensitive, default `"bitmap"`,
+  `400` on anything else) picks how a RAID5 tier's `mdadm --create`
+  protects against the write hole — see `Raid5ConsistencyPolicy` for the
+  perf-vs-safety trade-off between the three; ignored for Mirror/RAID6
+  tiers, which always keep a plain internal bitmap. `PlanCache` stores
+  all four alongside the plan itself, keyed into the plan id, so
   `/plan/{id}/script` and `/plan/{id}/execute` build exactly the layout
   this request described.
   →
@@ -90,7 +96,8 @@ already built over HTTP.
   Validated end-to-end through the Cockpit UI.
 - `POST /pools/{poolName}/expand` → body `{ diskIds: [...],
   targetProtection?: "none"|"dwr1"|"dwr2", redundancy?: "none"|"dwr1"|"dwr2",
-  targetArrayDevice?: string, assumeClean?: boolean, chunkSizeKb?: number }`, disks to add to a pool found via
+  targetArrayDevice?: string, assumeClean?: boolean, chunkSizeKb?: number,
+  raid5ConsistencyPolicy?: string }`, disks to add to a pool found via
   `GET /pools`. `assumeClean` (default `false`) is passed straight through
   to `CommandPlanner.BuildIncremental` — same `--assume-clean` behavior as
   `POST /plan`'s field of the same name, but only affects any brand-new
@@ -101,6 +108,13 @@ already built over HTTP.
   passed straight through — same behavior as `POST /plan`'s field of the
   same name, only affecting any brand-new striped tier this expansion
   creates; an existing tier's chunk size is never changed in place.
+  `raid5ConsistencyPolicy` (`"resync"`|`"bitmap"`|`"ppl"`, default
+  `"bitmap"`, `400` on anything else) is also passed straight through —
+  same meaning as `POST /plan`'s field of the same name, but unlike
+  `assumeClean`/`chunkSizeKb` it also applies when an *existing* tier
+  reshapes up into RAID5 (e.g. a mirror picking up a 3rd disk), not just
+  brand-new tiers, since that reshape's own last step is what actually
+  sets the new array's consistency policy.
   Three tenets drive this endpoint's design (see
   algorithm.md's "Expand tenets" for the full rationale):
   1. A fresh build (`POST /plan`) always picks the max-capacity layout

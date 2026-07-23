@@ -325,7 +325,27 @@ public class CommandPlannerIncrementalTests
     }
 
     [Fact]
-    public void MigratingMirrorToRaid5_EnablesPplAfterTheReshapeCompletes()
+    public void MigratingMirrorToRaid5_DefaultPolicyLeavesBitmapAlone()
+    {
+        // Bitmap is the default RAID5 consistency policy, and a Mirror tier already carries the
+        // internal bitmap it was created with -- migrating into RAID5 under the default needs no
+        // extra --grow steps at all, the bitmap it already has is exactly what's wanted.
+        var existing = new ExistingPoolState(
+            "diskweaver-pool",
+            ["data"],
+            [new ExistingTier("/dev/md127", 2 * Tb, ["/dev/disk/by-id/d0", "/dev/disk/by-id/d1"], RaidLevel.Mirror,
+                PartitionPaths("/dev/disk/by-id/d0", "/dev/disk/by-id/d1"))]);
+
+        var desired = TieringPlanner.Plan([Disk("d0", 2), Disk("d1", 2), Disk("d2", 2)], RedundancyLevel.Dwr1);
+
+        var plan = CommandPlanner.BuildIncremental(existing, desired);
+
+        Assert.DoesNotContain(plan.Steps, s => s.Command == "mdadm" && s.Arguments.Contains("--bitmap=none"));
+        Assert.DoesNotContain(plan.Steps, s => s.Command == "mdadm" && s.Arguments.Any(a => a.StartsWith("--consistency-policy=")));
+    }
+
+    [Fact]
+    public void MigratingMirrorToRaid5_PplRequested_EnablesPplAfterTheReshapeCompletes()
     {
         // The array still carries the internal bitmap it was created with as a Mirror throughout
         // the level-change reshape itself -- ppl can't be enabled until mdadm confirms the array
@@ -339,7 +359,7 @@ public class CommandPlannerIncrementalTests
 
         var desired = TieringPlanner.Plan([Disk("d0", 2), Disk("d1", 2), Disk("d2", 2)], RedundancyLevel.Dwr1);
 
-        var plan = CommandPlanner.BuildIncremental(existing, desired);
+        var plan = CommandPlanner.BuildIncremental(existing, desired, raid5ConsistencyPolicy: Raid5ConsistencyPolicy.Ppl);
 
         var growIndex = plan.Steps.ToList().FindIndex(s => s.Command == "mdadm" && s.Arguments.Contains("--grow") && s.Arguments.Contains("--level=5"));
         var waitIndex = plan.Steps.ToList().FindIndex(s => s.Command == "mdadm" && s.Arguments.SequenceEqual(new[] { "--wait", "/dev/md127" }));

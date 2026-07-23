@@ -40,9 +40,11 @@ public static class CommandPlanner
         string volumeName = "data",
         bool thinProvisioned = false,
         bool assumeClean = false,
-        int chunkSizeKb = DefaultChunkSizeKb)
+        int chunkSizeKb = DefaultChunkSizeKb,
+        Raid5ConsistencyPolicy raid5ConsistencyPolicy = Raid5ConsistencyPolicy.Bitmap)
     {
         ThrowIfInvalidChunkSize(chunkSizeKb);
+        ThrowIfInvalidRaid5ConsistencyPolicy(raid5ConsistencyPolicy);
         var labeledDisks = new HashSet<string>();
         var nextPartitionNumber = new Dictionary<string, int>();
         var diskOffsetBytes = new Dictionary<string, long>();
@@ -54,7 +56,7 @@ public static class CommandPlanner
         {
             var tier = plan.Tiers[tierIndex];
             var (tierSteps, arrayDevice) = BuildTierCreationSteps(
-                tier, tierIndex, poolName, labeledDisks, nextPartitionNumber, diskOffsetBytes, assumeClean, chunkSizeKb);
+                tier, tierIndex, poolName, labeledDisks, nextPartitionNumber, diskOffsetBytes, assumeClean, chunkSizeKb, raid5ConsistencyPolicy);
             steps.AddRange(tierSteps);
             arrayDevices.Add(arrayDevice);
             if (tier.DegradedSlots > 0)
@@ -126,9 +128,14 @@ public static class CommandPlanner
     /// array are refused outright rather than guessed at (see docs/execution.md).
     /// </summary>
     public static ExecutionPlan BuildIncremental(
-        ExistingPoolState current, PoolPlan desired, bool assumeClean = false, int chunkSizeKb = DefaultChunkSizeKb)
+        ExistingPoolState current,
+        PoolPlan desired,
+        bool assumeClean = false,
+        int chunkSizeKb = DefaultChunkSizeKb,
+        Raid5ConsistencyPolicy raid5ConsistencyPolicy = Raid5ConsistencyPolicy.Bitmap)
     {
         ThrowIfInvalidChunkSize(chunkSizeKb);
+        ThrowIfInvalidRaid5ConsistencyPolicy(raid5ConsistencyPolicy);
         var labeledDisks = new HashSet<string>(current.Tiers.SelectMany(t => t.DiskIds));
         var nextPartitionNumber = new Dictionary<string, int>();
         var diskOffsetBytes = new Dictionary<string, long>();
@@ -154,7 +161,7 @@ public static class CommandPlanner
             // 3-disk RAID5) -- mdadm --grow handles both via the same --raid-devices (+ --level
             // when it changes) invocation, so both are automated the same way.
             var (growSteps, capacityChanged) = BuildGrowSteps(
-                growCandidate.Existing, growCandidate.Desired, labeledDisks, nextPartitionNumber, diskOffsetBytes);
+                growCandidate.Existing, growCandidate.Desired, labeledDisks, nextPartitionNumber, diskOffsetBytes, raid5ConsistencyPolicy);
             steps.AddRange(growSteps);
             grewAnyTierInPlace |= capacityChanged;
         }
@@ -165,7 +172,7 @@ public static class CommandPlanner
         foreach (var newTier in classification.NewTiers)
         {
             var (tierSteps, arrayDevice) = BuildTierCreationSteps(
-                newTier, nextTierIndex++, current.PoolName, labeledDisks, nextPartitionNumber, diskOffsetBytes, assumeClean, chunkSizeKb);
+                newTier, nextTierIndex++, current.PoolName, labeledDisks, nextPartitionNumber, diskOffsetBytes, assumeClean, chunkSizeKb, raid5ConsistencyPolicy);
             steps.AddRange(tierSteps);
             newArrayDevices.Add(arrayDevice);
             if (newTier.DegradedSlots > 0)
@@ -230,7 +237,8 @@ public static class CommandPlanner
         Tier desired,
         HashSet<string> labeledDisks,
         Dictionary<string, int> nextPartitionNumber,
-        Dictionary<string, long> diskOffsetBytes)
+        Dictionary<string, long> diskOffsetBytes,
+        Raid5ConsistencyPolicy raid5ConsistencyPolicy = Raid5ConsistencyPolicy.Bitmap)
     {
         var steps = new List<ExecutionStep>();
         var newPartitionPaths = new List<string>();
@@ -391,15 +399,24 @@ public static class CommandPlanner
                 // Only reachable here via a Mirror -> RAID5 hop -- a same-level RAID5 device-count
                 // grow never has any level hops at all (levelHops.Count would be 0, handled by the
                 // branch above), so the array still carries the internal bitmap every Mirror tier
-                // is created with; ppl requires that gone first.
-                steps.Add(new ExecutionStep(
-                    $"Remove {existing.ArrayDevice}'s bitmap so ppl can be enabled",
-                    "mdadm",
-                    ["--grow", "--bitmap=none", existing.ArrayDevice]));
-                steps.Add(new ExecutionStep(
-                    $"Enable ppl on {existing.ArrayDevice} to close the RAID5 write hole",
-                    "mdadm",
-                    ["--grow", "--consistency-policy=ppl", existing.ArrayDevice]));
+                // is created with. Bitmap is the requested default, so that's simply left alone;
+                // Ppl/Resync need it switched explicitly (see Raid5ConsistencyPolicy for the
+                // perf-vs-safety trade-off behind this choice).
+                if (raid5ConsistencyPolicy != Raid5ConsistencyPolicy.Bitmap)
+                {
+                    steps.Add(new ExecutionStep(
+                        $"Remove {existing.ArrayDevice}'s bitmap so its consistency policy can change",
+                        "mdadm",
+                        ["--grow", "--bitmap=none", existing.ArrayDevice]));
+
+                    var policyArg = raid5ConsistencyPolicy == Raid5ConsistencyPolicy.Ppl
+                        ? "--consistency-policy=ppl"
+                        : "--consistency-policy=resync";
+                    var policyDescription = raid5ConsistencyPolicy == Raid5ConsistencyPolicy.Ppl
+                        ? $"Enable ppl on {existing.ArrayDevice} to close the RAID5 write hole"
+                        : $"Switch {existing.ArrayDevice} to plain resync (no bitmap, no ppl)";
+                    steps.Add(new ExecutionStep(policyDescription, "mdadm", ["--grow", policyArg, existing.ArrayDevice]));
+                }
             }
         }
 
@@ -861,7 +878,8 @@ public static class CommandPlanner
         Dictionary<string, int> nextPartitionNumber,
         Dictionary<string, long> diskOffsetBytes,
         bool assumeClean = false,
-        int chunkSizeKb = DefaultChunkSizeKb)
+        int chunkSizeKb = DefaultChunkSizeKb,
+        Raid5ConsistencyPolicy raid5ConsistencyPolicy = Raid5ConsistencyPolicy.Bitmap)
     {
         var steps = new List<ExecutionStep>();
         var partitionPaths = new List<string>();
@@ -941,17 +959,21 @@ public static class CommandPlanner
                 // that prompt is a script-safety hazard (unanswered it hangs; answered wrong it
                 // corrupts whatever runs next, same class of bug as vgremove's confirmation prompt).
                 //
-                // RAID5 gets ppl (Partial Parity Log) instead of a plain bitmap: unlike a bitmap
-                // (which only narrows an unclean-shutdown resync to the regions that were dirty),
-                // ppl logs each stripe's pre-write parity, so it actually closes the RAID5 write
-                // hole (a stripe torn by power loss leaving data and parity silently inconsistent)
-                // rather than just speeding up recovery from one. Mirror and RAID6 keep the plain
-                // bitmap: ppl is a RAID5-only mdadm feature (no RAID1 use case for it -- mirrors
-                // have no parity to protect -- and the kernel md driver has never implemented it
-                // for RAID6's dual P+Q parity). Closing RAID6's write hole needs a dedicated
-                // write-intent journal device instead, which DiskWeaver's planner has no concept
-                // of selecting today -- a real, separate gap, not something this covers.
-                tier.RaidLevel == RaidLevel.Raid5 ? "--consistency-policy=ppl" : "--bitmap=internal",
+                // Only RAID5 has a choice here (raid5ConsistencyPolicy -- see that enum for the
+                // perf-vs-safety trade-off behind resync/bitmap/ppl). Mirror and RAID6 always keep
+                // the plain internal bitmap: ppl is a RAID5-only mdadm feature (no RAID1 use case
+                // for it -- mirrors have no parity to protect -- and the kernel md driver has never
+                // implemented it for RAID6's dual P+Q parity). Closing RAID6's write hole needs a
+                // dedicated write-intent journal device instead, which DiskWeaver's planner has no
+                // concept of selecting today -- a real, separate gap, not something this covers.
+                tier.RaidLevel == RaidLevel.Raid5
+                    ? raid5ConsistencyPolicy switch
+                    {
+                        Raid5ConsistencyPolicy.Ppl => "--consistency-policy=ppl",
+                        Raid5ConsistencyPolicy.Resync => "--consistency-policy=resync",
+                        _ => "--bitmap=internal",
+                    }
+                    : "--bitmap=internal",
                 // --assume-clean skips the initial full-array resync/parity-build, which is safe
                 // here specifically because these partitions were just created blank by this same
                 // plan (there's no real data whose parity could be silently wrong to begin with) --
@@ -988,6 +1010,17 @@ public static class CommandPlanner
             throw new ArgumentException(
                 $"Unsupported chunk size {chunkSizeKb}K -- use one of: {string.Join(", ", ValidChunkSizesKb)} (KiB).",
                 nameof(chunkSizeKb));
+        }
+    }
+
+    private static void ThrowIfInvalidRaid5ConsistencyPolicy(Raid5ConsistencyPolicy raid5ConsistencyPolicy)
+    {
+        if (!Enum.IsDefined(raid5ConsistencyPolicy))
+        {
+            throw new ArgumentException(
+                $"Unsupported RAID5 consistency policy '{raid5ConsistencyPolicy}' -- use one of: "
+                + $"{string.Join(", ", Enum.GetNames<Raid5ConsistencyPolicy>())}.",
+                nameof(raid5ConsistencyPolicy));
         }
     }
 

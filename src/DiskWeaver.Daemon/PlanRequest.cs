@@ -27,10 +27,17 @@ namespace DiskWeaver.Daemon;
 /// Mirror tiers, which don't stripe. Must be one of <see cref="Executor.CommandPlanner.ValidChunkSizesKb"/>
 /// (<c>400</c> otherwise). Defaults to <see cref="Executor.CommandPlanner.DefaultChunkSizeKb"/>.
 /// </param>
+/// <param name="Raid5ConsistencyPolicy">
+/// How a RAID5 tier protects against the write hole: <c>resync</c>, <c>bitmap</c>, or <c>ppl</c>
+/// (case-insensitive; see <see cref="Executor.Raid5ConsistencyPolicy"/> for the perf-vs-safety
+/// trade-off between them). Ignored for Mirror/RAID6 tiers, which always keep a plain bitmap.
+/// Defaults to <c>bitmap</c>.
+/// </param>
 public sealed record PlanRequest(
     string[] DiskIds,
     string Redundancy,
     string? PoolName = null,
     bool ThinProvisioned = false,
     bool AssumeClean = false,
-    int ChunkSizeKb = Executor.CommandPlanner.DefaultChunkSizeKb);
+    int ChunkSizeKb = Executor.CommandPlanner.DefaultChunkSizeKb,
+    string Raid5ConsistencyPolicy = "bitmap");

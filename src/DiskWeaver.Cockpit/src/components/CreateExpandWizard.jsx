@@ -22,6 +22,7 @@ export function CreateExpandWizard({ pools, disks, expansionPoolName, onClose })
     const [thinProvisioned, setThinProvisioned] = useState(false);
     const [assumeClean, setAssumeClean] = useState(false);
     const [chunkSizeKb, setChunkSizeKb] = useState(64);
+    const [raid5ConsistencyPolicy, setRaid5ConsistencyPolicy] = useState("bitmap");
     // Expand-only: the daemon's up-to-two candidate plans (protection/space) for the picked
     // disk(s) -- see ExpansionOptionsStep and daemon-api.md's POST /pools/{poolName}/expand.
     const [options, setOptions] = useState([]);
@@ -61,7 +62,10 @@ export function CreateExpandWizard({ pools, disks, expansionPoolName, onClose })
                     setSelectedOptionId(response.options[0]?.planId ?? null);
                     setHypotheticalRebuildCapacityBytes(response.hypotheticalRebuildCapacityBytes);
                 })
-            : apiPostJson("/plan", { diskIds, redundancy, poolName: poolName.trim() || undefined, thinProvisioned, assumeClean, chunkSizeKb })
+            : apiPostJson("/plan", {
+                diskIds, redundancy, poolName: poolName.trim() || undefined, thinProvisioned, assumeClean, chunkSizeKb,
+                raid5ConsistencyPolicy,
+            })
                 .then(response => {
                     setPlanId(response.id);
                     setPlan(response.plan);
@@ -192,6 +196,8 @@ export function CreateExpandWizard({ pools, disks, expansionPoolName, onClose })
                         onAssumeCleanChange={setAssumeClean}
                         chunkSizeKb={chunkSizeKb}
                         onChunkSizeKbChange={setChunkSizeKb}
+                        raid5ConsistencyPolicy={raid5ConsistencyPolicy}
+                        onRaid5ConsistencyPolicyChange={setRaid5ConsistencyPolicy}
                     />
                 )}
                 {!confirmingExecute && step === STEP_OPTIONS && (
@@ -212,6 +218,7 @@ export function CreateExpandWizard({ pools, disks, expansionPoolName, onClose })
                         thinProvisioned={!isExpand && thinProvisioned}
                         assumeClean={!isExpand && assumeClean}
                         chunkSizeKb={!isExpand ? chunkSizeKb : undefined}
+                        raid5ConsistencyPolicy={!isExpand ? raid5ConsistencyPolicy : undefined}
                         onVisualize={() => setShowDiagram(true)}
                     />
                 )}

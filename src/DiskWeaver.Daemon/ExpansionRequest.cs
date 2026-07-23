@@ -41,10 +41,19 @@ namespace DiskWeaver.Daemon;
 /// <see cref="Executor.CommandPlanner.ValidChunkSizesKb"/> (<c>400</c> otherwise). Defaults to
 /// <see cref="Executor.CommandPlanner.DefaultChunkSizeKb"/>.
 /// </param>
+/// <param name="Raid5ConsistencyPolicy">
+/// How a RAID5 tier protects against the write hole: <c>resync</c>, <c>bitmap</c>, or <c>ppl</c>
+/// (case-insensitive; see <see cref="Executor.Raid5ConsistencyPolicy"/>). Unlike
+/// <see cref="AssumeClean"/>/<see cref="ChunkSizeKb"/>, this also applies when an existing tier
+/// reshapes up into RAID5 (e.g. a mirror picking up a 3rd disk), not just brand-new tiers -- see
+/// <see cref="Executor.CommandPlanner.BuildIncremental"/>. Ignored for Mirror/RAID6, which always
+/// keep a plain bitmap. Defaults to <c>bitmap</c>.
+/// </param>
 public sealed record ExpansionRequest(
     string[] DiskIds,
     string? TargetProtection = null,
     string? Redundancy = null,
     string? TargetArrayDevice = null,
     bool AssumeClean = false,
-    int ChunkSizeKb = Executor.CommandPlanner.DefaultChunkSizeKb);
+    int ChunkSizeKb = Executor.CommandPlanner.DefaultChunkSizeKb,
+    string Raid5ConsistencyPolicy = "bitmap");

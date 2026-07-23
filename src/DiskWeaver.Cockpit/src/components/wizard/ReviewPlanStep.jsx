@@ -11,7 +11,7 @@ import { apiRequest } from "../../api.js";
 // comment in CreateExpandWizard for the same reasoning).
 export function ReviewPlanStep({
     plan, achievedCapacityBytes, hypotheticalRebuildCapacityBytes, expansionPoolName, poolName, planId,
-    thinProvisioned, assumeClean, chunkSizeKb, onVisualize,
+    thinProvisioned, assumeClean, chunkSizeKb, raid5ConsistencyPolicy, onVisualize,
 }) {
     const [scriptText, setScriptText] = useState(null);
     const [scriptError, setScriptError] = useState(null);
@@ -68,6 +68,15 @@ export function ReviewPlanStep({
                 )}
                 {chunkSizeKb !== undefined && plan.tiers.some(t => t.raidLevel !== 0) && (
                     <p>Striped (RAID5/RAID6) tiers use a {chunkSizeKb} KiB chunk size.</p>
+                )}
+                {raid5ConsistencyPolicy !== undefined && plan.tiers.some(t => t.raidLevel === 1) && (
+                    <p>
+                        RAID5 tier(s) use{" "}
+                        {raid5ConsistencyPolicy === "resync" && "plain resync (fastest writes, but a full array resync and an open write hole after any unclean shutdown)"}
+                        {raid5ConsistencyPolicy === "bitmap" && "an internal bitmap (fast recovery after an unclean shutdown, small write overhead)"}
+                        {raid5ConsistencyPolicy === "ppl" && "PPL (closes the write hole entirely, at a significant cost to sustained write throughput)"}
+                        {" "}for write-hole protection.
+                    </p>
                 )}
                 {rebuildIsBetter && (
                     <p>
