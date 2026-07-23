@@ -20,10 +20,10 @@ public sealed class PlanCache
 
     public string Store(
         IReadOnlyList<Disk> selectedDisks, RedundancyLevel redundancy, string poolName, PoolPlan plan,
-        bool thinProvisioned = false)
+        bool thinProvisioned = false, bool assumeClean = false)
     {
-        var id = ComputeId(selectedDisks, redundancy, poolName, thinProvisioned);
-        _plans[id] = new CachedPlan(plan, selectedDisks, poolName, thinProvisioned);
+        var id = ComputeId(selectedDisks, redundancy, poolName, thinProvisioned, assumeClean);
+        _plans[id] = new CachedPlan(plan, selectedDisks, poolName, thinProvisioned, assumeClean);
         return id;
     }
 
@@ -73,14 +73,30 @@ public sealed class PlanCache
         return found;
     }
 
-    private sealed record CachedPlan(PoolPlan Plan, IReadOnlyList<Disk> SelectedDisks, string PoolName, bool ThinProvisioned);
+    /// <summary>
+    /// Whether <c>POST /plan</c> requested <c>--assume-clean</c> array creation (see
+    /// <see cref="Executor.CommandPlanner.Build"/>'s <c>assumeClean</c> parameter) -- so
+    /// <c>/plan/{id}/script</c> and <c>/plan/{id}/execute</c> build the same layout <c>POST /plan</c>
+    /// actually described, instead of silently falling back to the resync-on-create default.
+    /// </summary>
+    public bool TryGetAssumeClean(string id, out bool assumeClean)
+    {
+        var found = _plans.TryGetValue(id, out var cached);
+        assumeClean = cached?.AssumeClean ?? false;
+        return found;
+    }
 
-    private static string ComputeId(IReadOnlyList<Disk> disks, RedundancyLevel redundancy, string poolName, bool thinProvisioned)
+    private sealed record CachedPlan(
+        PoolPlan Plan, IReadOnlyList<Disk> SelectedDisks, string PoolName, bool ThinProvisioned, bool AssumeClean);
+
+    private static string ComputeId(
+        IReadOnlyList<Disk> disks, RedundancyLevel redundancy, string poolName, bool thinProvisioned, bool assumeClean)
     {
         var canonical = string.Join(
             ";",
             disks.OrderBy(d => d.Id, StringComparer.Ordinal).Select(d => $"{d.Id}:{d.SizeBytes}"));
-        var hash = SHA256.HashData(Encoding.UTF8.GetBytes($"{canonical};R={redundancy};P={poolName};T={thinProvisioned}"));
+        var hash = SHA256.HashData(
+            Encoding.UTF8.GetBytes($"{canonical};R={redundancy};P={poolName};T={thinProvisioned};A={assumeClean}"));
         return Convert.ToHexStringLower(hash)[..16];
     }
 }

@@ -230,7 +230,7 @@ app.MapPost("/plan", (PlanRequest request, IDiskInventorySource inventory, IPool
         return TextError(StatusCodes.Status400BadRequest, ex.Message);
     }
 
-    var id = cache.Store(selectedDisks, redundancy, poolName, plan, request.ThinProvisioned);
+    var id = cache.Store(selectedDisks, redundancy, poolName, plan, request.ThinProvisioned, request.AssumeClean);
     return Results.Ok(new PlanResponse(id, plan));
 });
 
@@ -242,9 +242,10 @@ app.MapGet("/plan/{id}/script", (string id, string? kind, PlanCache cache) =>
     }
 
     cache.TryGetThinProvisioned(id, out var thinProvisioned);
+    cache.TryGetAssumeClean(id, out var assumeClean);
     var executionPlan = string.Equals(kind, "teardown", StringComparison.OrdinalIgnoreCase)
         ? CommandPlanner.BuildTeardown(plan, poolName!, thinProvisioned: thinProvisioned)
-        : CommandPlanner.Build(plan, poolName!, thinProvisioned: thinProvisioned);
+        : CommandPlanner.Build(plan, poolName!, thinProvisioned: thinProvisioned, assumeClean: assumeClean);
 
     return Results.Text(ShellScriptEmitter.Render(executionPlan), "text/plain");
 });
@@ -286,9 +287,10 @@ app.MapPost("/plan/{id}/execute", (
     }
 
     cache.TryGetThinProvisioned(id, out var thinProvisioned);
+    cache.TryGetAssumeClean(id, out var assumeClean);
     var executionPlan = normalizedKind == "teardown"
         ? CommandPlanner.BuildTeardown(plan, poolName!, thinProvisioned: thinProvisioned)
-        : CommandPlanner.Build(plan, poolName!, thinProvisioned: thinProvisioned);
+        : CommandPlanner.Build(plan, poolName!, thinProvisioned: thinProvisioned, assumeClean: assumeClean);
 
     ExecutionJournal? journal = null;
     do
@@ -549,7 +551,7 @@ app.MapPost("/pools/{poolName}/expand", (string poolName, ExpansionRequest reque
         long achievedCapacityBytes;
         try
         {
-            executionPlan = CommandPlanner.BuildIncremental(pool, desired);
+            executionPlan = CommandPlanner.BuildIncremental(pool, desired, assumeClean: request.AssumeClean);
             achievedCapacityBytes = CommandPlanner.AchievedCapacityBytes(pool, desired);
         }
         catch (InvalidOperationException ex)

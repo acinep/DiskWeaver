@@ -5,7 +5,11 @@ using DiskWeaver.Planner;
 namespace DiskWeaver.Cli;
 
 /// <summary>
-/// Implements `diskweaver plan --redundancy ... --disks ... [--lsblk-json <file> | --lsblk] [--script <file>]`.
+/// Implements `diskweaver plan --redundancy ... --disks ... [--lsblk-json <file> | --lsblk] [--script <file>] [--assume-clean]`.
+/// <c>--assume-clean</c> (only affects <c>--script</c>) runs each tier's <c>mdadm --create</c> with
+/// <c>--assume-clean</c>, skipping the initial full-array resync/parity-build -- see
+/// <see cref="Executor.CommandPlanner.Build"/>'s <c>assumeClean</c> parameter for why that's safe
+/// on the always-blank disks this command works with.
 /// <c>--disks</c> is always required and always means "the exact disks to plan for" -- there is
 /// no mode where omitting it falls back to "use everything found". Without an inventory source
 /// it's a list of raw sizes (--disks 2TB,2TB,4TB); with --lsblk-json/--lsblk it's the disk
@@ -21,6 +25,7 @@ public static class PlanCommand
         string? redundancyArg = null;
         string? scriptOutputPath = null;
         string? teardownScriptOutputPath = null;
+        var assumeClean = false;
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -44,6 +49,9 @@ public static class PlanCommand
                 case "--teardown-script" when i + 1 < args.Length:
                     teardownScriptOutputPath = args[++i];
                     break;
+                case "--assume-clean":
+                    assumeClean = true;
+                    break;
             }
         }
 
@@ -52,7 +60,8 @@ public static class PlanCommand
         if (redundancyArg is null || disksArg is null || inventorySourceCount > 1)
         {
             Console.Error.WriteLine(
-                "Usage: diskweaver plan --redundancy <none|dwr1|dwr2> --disks <size,size,... | name,name,...> [--lsblk-json <file> | --lsblk]");
+                "Usage: diskweaver plan --redundancy <none|dwr1|dwr2> --disks <size,size,... | name,name,...> "
+                + "[--lsblk-json <file> | --lsblk] [--script <file>] [--assume-clean]");
             Console.Error.WriteLine("Example: diskweaver plan --redundancy dwr1 --disks 2TB,2TB,4TB,4TB,4TB");
             Console.Error.WriteLine(
                 "Example: diskweaver plan --redundancy dwr1 --lsblk-json inventory.json --disks loop0,loop1,loop2,loop3");
@@ -125,7 +134,7 @@ public static class PlanCommand
 
         if (scriptOutputPath is not null)
         {
-            var executionPlan = CommandPlanner.Build(plan);
+            var executionPlan = CommandPlanner.Build(plan, assumeClean: assumeClean);
             var script = ShellScriptEmitter.Render(executionPlan);
             File.WriteAllText(scriptOutputPath, script);
             Console.WriteLine();

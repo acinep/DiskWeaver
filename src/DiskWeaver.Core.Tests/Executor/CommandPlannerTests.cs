@@ -152,6 +152,28 @@ public class CommandPlannerTests
     }
 
     [Fact]
+    public void MdadmCreate_AssumeCleanFalseByDefault_OmitsFlag()
+    {
+        var poolPlan = TieringPlanner.Plan(Disks(2, 2, 2), RedundancyLevel.Dwr2);
+        var plan = CommandPlanner.Build(poolPlan);
+
+        var mirrorCreate = Assert.Single(plan.Steps, s => s.Command == "mdadm" && s.Arguments.Contains("--create"));
+        Assert.DoesNotContain("--assume-clean", mirrorCreate.Arguments);
+    }
+
+    [Fact]
+    public void MdadmCreate_AssumeCleanRequested_AddsFlagToEveryTier()
+    {
+        var poolPlan = TieringPlanner.Plan(Disks(2, 2, 4, 4, 4), RedundancyLevel.Dwr1);
+        var plan = CommandPlanner.Build(poolPlan, assumeClean: true);
+
+        foreach (var mdadmCreate in plan.Steps.Where(s => s.Command == "mdadm" && s.Arguments.Contains("--create")))
+        {
+            Assert.Contains("--assume-clean", mdadmCreate.Arguments);
+        }
+    }
+
+    [Fact]
     public void MdadmCreate_AlwaysSpecifiesRun_NeverPromptsAboutStaleMemberSuperblocks()
     {
         // A different mdadm --create prompt than the bitmap one above: "<partition> appears to be

@@ -26,8 +26,16 @@ namespace DiskWeaver.Daemon;
 /// tier to currently be missing a real member (unprotected-by-design or degraded from a disk
 /// failure). Mutually exclusive with <see cref="TargetProtection"/> and <see cref="Redundancy"/>.
 /// </param>
+/// <param name="AssumeClean">
+/// When true, any brand-new tier this expansion creates is built with <c>mdadm --create
+/// --assume-clean</c>, skipping its initial full-array resync/parity-build -- see
+/// <see cref="Executor.CommandPlanner.BuildIncremental"/>'s <c>assumeClean</c> parameter. Only
+/// applies to newly-created tiers; growing an existing tier in place always resyncs (mdadm has no
+/// equivalent skip for <c>--grow</c>). Defaults to false.
+/// </param>
 public sealed record ExpansionRequest(
     string[] DiskIds,
     string? TargetProtection = null,
     string? Redundancy = null,
-    string? TargetArrayDevice = null);
+    string? TargetArrayDevice = null,
+    bool AssumeClean = false);

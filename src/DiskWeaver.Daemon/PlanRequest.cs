@@ -16,4 +16,11 @@ namespace DiskWeaver.Daemon;
 /// <c>data</c> sized to the thin pool's full capacity, instead of the default single thick LV --
 /// see execution.md's "Multiple logical volumes (thin pools)" for what this does and doesn't cover.
 /// </param>
-public sealed record PlanRequest(string[] DiskIds, string Redundancy, string? PoolName = null, bool ThinProvisioned = false);
+/// <param name="AssumeClean">
+/// When true, each tier's <c>mdadm --create</c> is run with <c>--assume-clean</c>, skipping the
+/// initial full-array resync/parity-build -- safe here because every disk this builds on was just
+/// verified blank, so there's no real data whose parity could be silently wrong to begin with.
+/// Defaults to false (the safer, resync-on-create default) since this is opt-in.
+/// </param>
+public sealed record PlanRequest(
+    string[] DiskIds, string Redundancy, string? PoolName = null, bool ThinProvisioned = false, bool AssumeClean = false);

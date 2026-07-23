@@ -34,14 +34,19 @@ already built over HTTP.
   ToDiskId` — the exact inverse of the naming `CommandPlanner` uses when
   building the array in the first place.
 - `POST /plan` → body: `{ diskIds: [...], redundancy: "none"|"dwr1"|"dwr2",
-  poolName?, thinProvisioned? }` (optionally `{ existingPool: ... }` for
+  poolName?, thinProvisioned?, assumeClean? }` (optionally `{ existingPool: ... }` for
   the incremental path) → `thinProvisioned` (default `false`) makes the
   eventual `Build`/`BuildTeardown` create a thin pool (with headroom, see
   `CommandPlanner.ThinPoolHeadroomPercent`) plus one thin `data` volume
   instead of the default single thick LV — see execution.md's "Multiple
-  logical volumes (thin pools)". `PlanCache` stores it alongside the plan
-  itself, keyed into the plan id, so `/plan/{id}/script` and
-  `/plan/{id}/execute` build exactly the layout this request described.
+  logical volumes (thin pools)". `assumeClean` (default `false`) makes
+  each tier's `mdadm --create` pass `--assume-clean`, skipping the
+  initial full-array resync/parity-build — safe here specifically
+  because every disk was just verified blank, so there's no real data
+  whose parity could be silently wrong to begin with. `PlanCache` stores
+  both alongside the plan itself, keyed into the plan id, so
+  `/plan/{id}/script` and `/plan/{id}/execute` build exactly the layout
+  this request described.
   →
   returns a `PoolPlan` plus a **plan id** (see below). `"none"` builds
   each disk as its own independent, unprotected tier — a degraded 2-slot
@@ -81,8 +86,13 @@ already built over HTTP.
   Validated end-to-end through the Cockpit UI.
 - `POST /pools/{poolName}/expand` → body `{ diskIds: [...],
   targetProtection?: "none"|"dwr1"|"dwr2", redundancy?: "none"|"dwr1"|"dwr2",
-  targetArrayDevice?: string }`, disks to add to a pool found via
-  `GET /pools`. Three tenets drive this endpoint's design (see
+  targetArrayDevice?: string, assumeClean?: boolean }`, disks to add to a pool found via
+  `GET /pools`. `assumeClean` (default `false`) is passed straight through
+  to `CommandPlanner.BuildIncremental` — same `--assume-clean` behavior as
+  `POST /plan`'s field of the same name, but only affects any brand-new
+  tier this expansion creates; growing an existing tier in place
+  (`mdadm --grow`) always resyncs regardless, since mdadm has no
+  equivalent skip for that operation. Three tenets drive this endpoint's design (see
   algorithm.md's "Expand tenets" for the full rationale):
   1. A fresh build (`POST /plan`) always picks the max-capacity layout
      for the requested redundancy — nothing new here, just the baseline.

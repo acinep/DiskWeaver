@@ -7,6 +7,7 @@ import { Form, FormGroup, TextInput, FormSelect, FormSelectOption, Checkbox } fr
 // CreateExpandWizard when expanding.
 export function ConfigureStep({
     poolName, onPoolNameChange, redundancy, onRedundancyChange, diskCount, thinProvisioned, onThinProvisionedChange,
+    assumeClean, onAssumeCleanChange,
 }) {
     // DWR-2 tolerates 2 disk failures, which needs a disk on top of the 2 that
     // hold the parity itself -- selecting it with 2 or fewer disks would just
@@ -48,6 +49,21 @@ export function ConfigureStep({
                     }
                     isChecked={thinProvisioned}
                     onChange={(_event, checked) => onThinProvisionedChange(checked)}
+                />
+            </FormGroup>
+            <FormGroup fieldId="assume-clean">
+                <Checkbox
+                    id="assume-clean"
+                    label="Skip initial resync (--assume-clean)"
+                    description={
+                        "Creates each tier's mdadm array with --assume-clean, skipping the initial "
+                        + "full-array resync/parity-build. Safe here because every disk is verified "
+                        + "blank before creation, so there's no real data whose parity could be wrong "
+                        + "to begin with -- but it does mean any latent bad sectors go undetected "
+                        + "until they're actually read/written, instead of being surfaced by the resync."
+                    }
+                    isChecked={assumeClean}
+                    onChange={(_event, checked) => onAssumeCleanChange(checked)}
                 />
             </FormGroup>
         </Form>

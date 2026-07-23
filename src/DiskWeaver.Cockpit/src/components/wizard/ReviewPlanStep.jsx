@@ -11,7 +11,7 @@ import { apiRequest } from "../../api.js";
 // comment in CreateExpandWizard for the same reasoning).
 export function ReviewPlanStep({
     plan, achievedCapacityBytes, hypotheticalRebuildCapacityBytes, expansionPoolName, poolName, planId,
-    thinProvisioned, onVisualize,
+    thinProvisioned, assumeClean, onVisualize,
 }) {
     const [scriptText, setScriptText] = useState(null);
     const [scriptError, setScriptError] = useState(null);
@@ -62,6 +62,9 @@ export function ReviewPlanStep({
                 </p>
                 {thinProvisioned && (
                     <p>Thin-provisioned: a thin pool with 10% headroom, plus one "data" volume using its full capacity.</p>
+                )}
+                {assumeClean && (
+                    <p>Skipping initial resync: each tier's array is created with --assume-clean.</p>
                 )}
                 {rebuildIsBetter && (
                     <p>

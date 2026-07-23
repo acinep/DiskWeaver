@@ -26,7 +26,8 @@ public static class CommandPlanner
         PoolPlan plan,
         string poolName = "diskweaver-pool",
         string volumeName = "data",
-        bool thinProvisioned = false)
+        bool thinProvisioned = false,
+        bool assumeClean = false)
     {
         var labeledDisks = new HashSet<string>();
         var nextPartitionNumber = new Dictionary<string, int>();
@@ -39,7 +40,7 @@ public static class CommandPlanner
         {
             var tier = plan.Tiers[tierIndex];
             var (tierSteps, arrayDevice) = BuildTierCreationSteps(
-                tier, tierIndex, poolName, labeledDisks, nextPartitionNumber, diskOffsetBytes);
+                tier, tierIndex, poolName, labeledDisks, nextPartitionNumber, diskOffsetBytes, assumeClean);
             steps.AddRange(tierSteps);
             arrayDevices.Add(arrayDevice);
             if (tier.DegradedSlots > 0)
@@ -110,7 +111,7 @@ public static class CommandPlanner
     /// scenarios that would require resizing/splitting/reshaping an existing
     /// array are refused outright rather than guessed at (see docs/execution.md).
     /// </summary>
-    public static ExecutionPlan BuildIncremental(ExistingPoolState current, PoolPlan desired)
+    public static ExecutionPlan BuildIncremental(ExistingPoolState current, PoolPlan desired, bool assumeClean = false)
     {
         var labeledDisks = new HashSet<string>(current.Tiers.SelectMany(t => t.DiskIds));
         var nextPartitionNumber = new Dictionary<string, int>();
@@ -148,7 +149,7 @@ public static class CommandPlanner
         foreach (var newTier in classification.NewTiers)
         {
             var (tierSteps, arrayDevice) = BuildTierCreationSteps(
-                newTier, nextTierIndex++, current.PoolName, labeledDisks, nextPartitionNumber, diskOffsetBytes);
+                newTier, nextTierIndex++, current.PoolName, labeledDisks, nextPartitionNumber, diskOffsetBytes, assumeClean);
             steps.AddRange(tierSteps);
             newArrayDevices.Add(arrayDevice);
             if (newTier.DegradedSlots > 0)
@@ -842,7 +843,8 @@ public static class CommandPlanner
         string poolName,
         HashSet<string> labeledDisks,
         Dictionary<string, int> nextPartitionNumber,
-        Dictionary<string, long> diskOffsetBytes)
+        Dictionary<string, long> diskOffsetBytes,
+        bool assumeClean = false)
     {
         var steps = new List<ExecutionStep>();
         var partitionPaths = new List<string>();
@@ -929,6 +931,12 @@ public static class CommandPlanner
                 // write-intent journal device instead, which DiskWeaver's planner has no concept
                 // of selecting today -- a real, separate gap, not something this covers.
                 tier.RaidLevel == RaidLevel.Raid5 ? "--consistency-policy=ppl" : "--bitmap=internal",
+                // --assume-clean skips the initial full-array resync/parity-build, which is safe
+                // here specifically because these partitions were just created blank by this same
+                // plan (there's no real data whose parity could be silently wrong to begin with) --
+                // opt-in only, since assuming "clean" on a mirror/parity array that actually has
+                // stale data on it would leave that staleness undetected instead of resynced.
+                ..(assumeClean ? new[] { "--assume-clean" } : Array.Empty<string>()),
                 // A different interactive prompt than the bitmap one above: mdadm --create asks
                 // "appears to be part of a raid array... Continue creating array?" if any input
                 // partition still has an old RAID superblock on it (e.g. a partition number/offset
