@@ -174,6 +174,53 @@ public class CommandPlannerTests
     }
 
     [Fact]
+    public void MdadmCreate_DefaultChunkSize_Is64Kib_OnStripedTiers()
+    {
+        var poolPlan = TieringPlanner.Plan(Disks(2, 2, 4, 4, 4), RedundancyLevel.Dwr1);
+        var plan = CommandPlanner.Build(poolPlan);
+
+        foreach (var mdadmCreate in plan.Steps.Where(s => s.Command == "mdadm" && s.Arguments.Contains("--create")))
+        {
+            Assert.Contains("--chunk=64", mdadmCreate.Arguments);
+        }
+    }
+
+    [Theory]
+    [InlineData(64)]
+    [InlineData(128)]
+    [InlineData(256)]
+    [InlineData(512)]
+    public void MdadmCreate_ChunkSizeRequested_AppliesToStripedTiers(int chunkSizeKb)
+    {
+        var poolPlan = TieringPlanner.Plan(Disks(2, 2, 4, 4, 4), RedundancyLevel.Dwr1);
+        var plan = CommandPlanner.Build(poolPlan, chunkSizeKb: chunkSizeKb);
+
+        foreach (var mdadmCreate in plan.Steps.Where(s => s.Command == "mdadm" && s.Arguments.Contains("--create")))
+        {
+            Assert.Contains($"--chunk={chunkSizeKb}", mdadmCreate.Arguments);
+        }
+    }
+
+    [Fact]
+    public void MdadmCreate_MirrorTier_NeverGetsChunkFlag()
+    {
+        // RAID1 doesn't stripe, so it has no chunk size -- mdadm ignores/warns on --chunk for
+        // RAID1, so this is omitted entirely rather than passed and silently disregarded.
+        var poolPlan = TieringPlanner.Plan(Disks(2, 2, 2), RedundancyLevel.Dwr2);
+        var plan = CommandPlanner.Build(poolPlan, chunkSizeKb: 256);
+
+        var mirrorCreate = Assert.Single(plan.Steps, s => s.Command == "mdadm" && s.Arguments.Contains("--create"));
+        Assert.DoesNotContain(mirrorCreate.Arguments, a => a.StartsWith("--chunk="));
+    }
+
+    [Fact]
+    public void Build_InvalidChunkSize_Throws()
+    {
+        var poolPlan = TieringPlanner.Plan(Disks(2, 2, 4, 4, 4), RedundancyLevel.Dwr1);
+        Assert.Throws<ArgumentException>(() => CommandPlanner.Build(poolPlan, chunkSizeKb: 100));
+    }
+
+    [Fact]
     public void MdadmCreate_AlwaysSpecifiesRun_NeverPromptsAboutStaleMemberSuperblocks()
     {
         // A different mdadm --create prompt than the bitmap one above: "<partition> appears to be

@@ -22,13 +22,27 @@ public static class CommandPlanner
     /// for why this needs to be a real, if small, reservation rather than 100%FREE.</summary>
     public const int ThinPoolHeadroomPercent = 10;
 
+    /// <summary>Default <c>mdadm --create --chunk</c> size (KiB) for striped (RAID5/RAID6) tiers when
+    /// the caller doesn't specify one -- smaller than mdadm's own 512K default, which favors large
+    /// sequential throughput over the small-write performance most DiskWeaver workloads care more
+    /// about. Has no effect on Mirror tiers, which don't stripe and so ignore chunk size entirely.</summary>
+    public const int DefaultChunkSizeKb = 64;
+
+    /// <summary>The only chunk sizes (KiB) <see cref="Build"/>/<see cref="BuildIncremental"/> accept --
+    /// intentionally a short fixed menu (matching the Cockpit UI's dropdown) rather than any mdadm-
+    /// legal power of two, so a typo'd value fails fast here instead of surfacing as a confusing mdadm
+    /// error partway through a plan.</summary>
+    public static readonly int[] ValidChunkSizesKb = [64, 128, 256, 512];
+
     public static ExecutionPlan Build(
         PoolPlan plan,
         string poolName = "diskweaver-pool",
         string volumeName = "data",
         bool thinProvisioned = false,
-        bool assumeClean = false)
+        bool assumeClean = false,
+        int chunkSizeKb = DefaultChunkSizeKb)
     {
+        ThrowIfInvalidChunkSize(chunkSizeKb);
         var labeledDisks = new HashSet<string>();
         var nextPartitionNumber = new Dictionary<string, int>();
         var diskOffsetBytes = new Dictionary<string, long>();
@@ -40,7 +54,7 @@ public static class CommandPlanner
         {
             var tier = plan.Tiers[tierIndex];
             var (tierSteps, arrayDevice) = BuildTierCreationSteps(
-                tier, tierIndex, poolName, labeledDisks, nextPartitionNumber, diskOffsetBytes, assumeClean);
+                tier, tierIndex, poolName, labeledDisks, nextPartitionNumber, diskOffsetBytes, assumeClean, chunkSizeKb);
             steps.AddRange(tierSteps);
             arrayDevices.Add(arrayDevice);
             if (tier.DegradedSlots > 0)
@@ -111,8 +125,10 @@ public static class CommandPlanner
     /// scenarios that would require resizing/splitting/reshaping an existing
     /// array are refused outright rather than guessed at (see docs/execution.md).
     /// </summary>
-    public static ExecutionPlan BuildIncremental(ExistingPoolState current, PoolPlan desired, bool assumeClean = false)
+    public static ExecutionPlan BuildIncremental(
+        ExistingPoolState current, PoolPlan desired, bool assumeClean = false, int chunkSizeKb = DefaultChunkSizeKb)
     {
+        ThrowIfInvalidChunkSize(chunkSizeKb);
         var labeledDisks = new HashSet<string>(current.Tiers.SelectMany(t => t.DiskIds));
         var nextPartitionNumber = new Dictionary<string, int>();
         var diskOffsetBytes = new Dictionary<string, long>();
@@ -149,7 +165,7 @@ public static class CommandPlanner
         foreach (var newTier in classification.NewTiers)
         {
             var (tierSteps, arrayDevice) = BuildTierCreationSteps(
-                newTier, nextTierIndex++, current.PoolName, labeledDisks, nextPartitionNumber, diskOffsetBytes, assumeClean);
+                newTier, nextTierIndex++, current.PoolName, labeledDisks, nextPartitionNumber, diskOffsetBytes, assumeClean, chunkSizeKb);
             steps.AddRange(tierSteps);
             newArrayDevices.Add(arrayDevice);
             if (newTier.DegradedSlots > 0)
@@ -844,7 +860,8 @@ public static class CommandPlanner
         HashSet<string> labeledDisks,
         Dictionary<string, int> nextPartitionNumber,
         Dictionary<string, long> diskOffsetBytes,
-        bool assumeClean = false)
+        bool assumeClean = false,
+        int chunkSizeKb = DefaultChunkSizeKb)
     {
         var steps = new List<ExecutionStep>();
         var partitionPaths = new List<string>();
@@ -916,6 +933,10 @@ public static class CommandPlanner
                 $"--level={ToMdadmLevel(tier.RaidLevel)}",
                 $"--raid-devices={raidDevices}",
                 "--metadata=1.2",
+                // Only striped levels (RAID5/RAID6) have a chunk size at all -- a Mirror tier has no
+                // stripe to size, and mdadm ignores/warns on --chunk for RAID1, so it's simply omitted
+                // rather than passed and silently disregarded.
+                ..(tier.RaidLevel != RaidLevel.Mirror ? new[] { $"--chunk={chunkSizeKb}" } : Array.Empty<string>()),
                 // Explicit, not left to mdadm's interactive "enable write-intent bitmap?" prompt --
                 // that prompt is a script-safety hazard (unanswered it hangs; answered wrong it
                 // corrupts whatever runs next, same class of bug as vgremove's confirmation prompt).
@@ -958,6 +979,16 @@ public static class CommandPlanner
             [arrayDevice]));
 
         return (steps, arrayDevice);
+    }
+
+    private static void ThrowIfInvalidChunkSize(int chunkSizeKb)
+    {
+        if (!ValidChunkSizesKb.Contains(chunkSizeKb))
+        {
+            throw new ArgumentException(
+                $"Unsupported chunk size {chunkSizeKb}K -- use one of: {string.Join(", ", ValidChunkSizesKb)} (KiB).",
+                nameof(chunkSizeKb));
+        }
     }
 
     /// <summary>

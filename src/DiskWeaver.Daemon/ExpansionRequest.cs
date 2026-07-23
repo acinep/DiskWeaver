@@ -33,9 +33,18 @@ namespace DiskWeaver.Daemon;
 /// applies to newly-created tiers; growing an existing tier in place always resyncs (mdadm has no
 /// equivalent skip for <c>--grow</c>). Defaults to false.
 /// </param>
+/// <param name="ChunkSizeKb">
+/// The <c>mdadm --create --chunk</c> size (KiB) for any brand-new striped (RAID5/RAID6) tier this
+/// expansion creates -- see <see cref="Executor.CommandPlanner.BuildIncremental"/>'s
+/// <c>chunkSizeKb</c> parameter. Only applies to newly-created tiers; growing an existing tier in
+/// place never changes its chunk size. Must be one of
+/// <see cref="Executor.CommandPlanner.ValidChunkSizesKb"/> (<c>400</c> otherwise). Defaults to
+/// <see cref="Executor.CommandPlanner.DefaultChunkSizeKb"/>.
+/// </param>
 public sealed record ExpansionRequest(
     string[] DiskIds,
     string? TargetProtection = null,
     string? Redundancy = null,
     string? TargetArrayDevice = null,
-    bool AssumeClean = false);
+    bool AssumeClean = false,
+    int ChunkSizeKb = Executor.CommandPlanner.DefaultChunkSizeKb);

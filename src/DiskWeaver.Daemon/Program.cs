@@ -198,6 +198,13 @@ app.MapPost("/plan", (PlanRequest request, IDiskInventorySource inventory, IPool
         return TextError(StatusCodes.Status400BadRequest, poolNameError!);
     }
 
+    if (!CommandPlanner.ValidChunkSizesKb.Contains(request.ChunkSizeKb))
+    {
+        return TextError(StatusCodes.Status400BadRequest,
+            $"Unsupported chunkSizeKb {request.ChunkSizeKb} -- use one of: "
+            + $"{string.Join(", ", CommandPlanner.ValidChunkSizesKb)}.");
+    }
+
     if (poolState.GetPools().Any(p => p.PoolName == poolName))
     {
         return TextError(StatusCodes.Status400BadRequest,
@@ -230,7 +237,8 @@ app.MapPost("/plan", (PlanRequest request, IDiskInventorySource inventory, IPool
         return TextError(StatusCodes.Status400BadRequest, ex.Message);
     }
 
-    var id = cache.Store(selectedDisks, redundancy, poolName, plan, request.ThinProvisioned, request.AssumeClean);
+    var id = cache.Store(
+        selectedDisks, redundancy, poolName, plan, request.ThinProvisioned, request.AssumeClean, request.ChunkSizeKb);
     return Results.Ok(new PlanResponse(id, plan));
 });
 
@@ -243,9 +251,10 @@ app.MapGet("/plan/{id}/script", (string id, string? kind, PlanCache cache) =>
 
     cache.TryGetThinProvisioned(id, out var thinProvisioned);
     cache.TryGetAssumeClean(id, out var assumeClean);
+    cache.TryGetChunkSizeKb(id, out var chunkSizeKb);
     var executionPlan = string.Equals(kind, "teardown", StringComparison.OrdinalIgnoreCase)
         ? CommandPlanner.BuildTeardown(plan, poolName!, thinProvisioned: thinProvisioned)
-        : CommandPlanner.Build(plan, poolName!, thinProvisioned: thinProvisioned, assumeClean: assumeClean);
+        : CommandPlanner.Build(plan, poolName!, thinProvisioned: thinProvisioned, assumeClean: assumeClean, chunkSizeKb: chunkSizeKb);
 
     return Results.Text(ShellScriptEmitter.Render(executionPlan), "text/plain");
 });
@@ -288,9 +297,10 @@ app.MapPost("/plan/{id}/execute", (
 
     cache.TryGetThinProvisioned(id, out var thinProvisioned);
     cache.TryGetAssumeClean(id, out var assumeClean);
+    cache.TryGetChunkSizeKb(id, out var chunkSizeKb);
     var executionPlan = normalizedKind == "teardown"
         ? CommandPlanner.BuildTeardown(plan, poolName!, thinProvisioned: thinProvisioned)
-        : CommandPlanner.Build(plan, poolName!, thinProvisioned: thinProvisioned, assumeClean: assumeClean);
+        : CommandPlanner.Build(plan, poolName!, thinProvisioned: thinProvisioned, assumeClean: assumeClean, chunkSizeKb: chunkSizeKb);
 
     ExecutionJournal? journal = null;
     do
@@ -371,6 +381,13 @@ app.MapPost("/pools/{poolName}/expand", (string poolName, ExpansionRequest reque
         return TextError(StatusCodes.Status400BadRequest,
             "Specify at most one of targetProtection, redundancy, or targetArrayDevice -- "
             + "redundancy/targetArrayDevice are advanced/manual modes that bypass the default two-option preview.");
+    }
+
+    if (!CommandPlanner.ValidChunkSizesKb.Contains(request.ChunkSizeKb))
+    {
+        return TextError(StatusCodes.Status400BadRequest,
+            $"Unsupported chunkSizeKb {request.ChunkSizeKb} -- use one of: "
+            + $"{string.Join(", ", CommandPlanner.ValidChunkSizesKb)}.");
     }
 
     var candidates = new List<(string Intent, PoolPlan Desired, RedundancyLevel? AchievedRedundancy)>();
@@ -551,7 +568,8 @@ app.MapPost("/pools/{poolName}/expand", (string poolName, ExpansionRequest reque
         long achievedCapacityBytes;
         try
         {
-            executionPlan = CommandPlanner.BuildIncremental(pool, desired, assumeClean: request.AssumeClean);
+            executionPlan = CommandPlanner.BuildIncremental(
+                pool, desired, assumeClean: request.AssumeClean, chunkSizeKb: request.ChunkSizeKb);
             achievedCapacityBytes = CommandPlanner.AchievedCapacityBytes(pool, desired);
         }
         catch (InvalidOperationException ex)

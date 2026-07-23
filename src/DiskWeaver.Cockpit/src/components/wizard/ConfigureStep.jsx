@@ -7,7 +7,7 @@ import { Form, FormGroup, TextInput, FormSelect, FormSelectOption, Checkbox } fr
 // CreateExpandWizard when expanding.
 export function ConfigureStep({
     poolName, onPoolNameChange, redundancy, onRedundancyChange, diskCount, thinProvisioned, onThinProvisionedChange,
-    assumeClean, onAssumeCleanChange,
+    assumeClean, onAssumeCleanChange, chunkSizeKb, onChunkSizeKbChange,
 }) {
     // DWR-2 tolerates 2 disk failures, which needs a disk on top of the 2 that
     // hold the parity itself -- selecting it with 2 or fewer disks would just
@@ -65,6 +65,18 @@ export function ConfigureStep({
                     isChecked={assumeClean}
                     onChange={(_event, checked) => onAssumeCleanChange(checked)}
                 />
+            </FormGroup>
+            <FormGroup label="Chunk size" fieldId="chunk-size">
+                <FormSelect
+                    id="chunk-size"
+                    value={chunkSizeKb}
+                    onChange={(_event, value) => onChunkSizeKbChange(Number(value))}
+                >
+                    <FormSelectOption value={64} label="64 KiB (default -- favors small/random I/O)" />
+                    <FormSelectOption value={128} label="128 KiB" />
+                    <FormSelectOption value={256} label="256 KiB" />
+                    <FormSelectOption value={512} label="512 KiB (mdadm's own default -- favors large sequential I/O)" />
+                </FormSelect>
             </FormGroup>
         </Form>
     );

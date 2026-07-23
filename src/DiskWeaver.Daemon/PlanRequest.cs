@@ -22,5 +22,15 @@ namespace DiskWeaver.Daemon;
 /// verified blank, so there's no real data whose parity could be silently wrong to begin with.
 /// Defaults to false (the safer, resync-on-create default) since this is opt-in.
 /// </param>
+/// <param name="ChunkSizeKb">
+/// The <c>mdadm --create --chunk</c> size (KiB) for striped (RAID5/RAID6) tiers -- ignored for
+/// Mirror tiers, which don't stripe. Must be one of <see cref="Executor.CommandPlanner.ValidChunkSizesKb"/>
+/// (<c>400</c> otherwise). Defaults to <see cref="Executor.CommandPlanner.DefaultChunkSizeKb"/>.
+/// </param>
 public sealed record PlanRequest(
-    string[] DiskIds, string Redundancy, string? PoolName = null, bool ThinProvisioned = false, bool AssumeClean = false);
+    string[] DiskIds,
+    string Redundancy,
+    string? PoolName = null,
+    bool ThinProvisioned = false,
+    bool AssumeClean = false,
+    int ChunkSizeKb = Executor.CommandPlanner.DefaultChunkSizeKb);

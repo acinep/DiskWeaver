@@ -20,10 +20,10 @@ public sealed class PlanCache
 
     public string Store(
         IReadOnlyList<Disk> selectedDisks, RedundancyLevel redundancy, string poolName, PoolPlan plan,
-        bool thinProvisioned = false, bool assumeClean = false)
+        bool thinProvisioned = false, bool assumeClean = false, int chunkSizeKb = Executor.CommandPlanner.DefaultChunkSizeKb)
     {
-        var id = ComputeId(selectedDisks, redundancy, poolName, thinProvisioned, assumeClean);
-        _plans[id] = new CachedPlan(plan, selectedDisks, poolName, thinProvisioned, assumeClean);
+        var id = ComputeId(selectedDisks, redundancy, poolName, thinProvisioned, assumeClean, chunkSizeKb);
+        _plans[id] = new CachedPlan(plan, selectedDisks, poolName, thinProvisioned, assumeClean, chunkSizeKb);
         return id;
     }
 
@@ -86,17 +86,32 @@ public sealed class PlanCache
         return found;
     }
 
+    /// <summary>
+    /// The <c>mdadm --create --chunk</c> size (KiB) <c>POST /plan</c> requested (see
+    /// <see cref="Executor.CommandPlanner.Build"/>'s <c>chunkSizeKb</c> parameter) -- so
+    /// <c>/plan/{id}/script</c> and <c>/plan/{id}/execute</c> build the same layout <c>POST /plan</c>
+    /// actually described, instead of silently falling back to the default.
+    /// </summary>
+    public bool TryGetChunkSizeKb(string id, out int chunkSizeKb)
+    {
+        var found = _plans.TryGetValue(id, out var cached);
+        chunkSizeKb = cached?.ChunkSizeKb ?? Executor.CommandPlanner.DefaultChunkSizeKb;
+        return found;
+    }
+
     private sealed record CachedPlan(
-        PoolPlan Plan, IReadOnlyList<Disk> SelectedDisks, string PoolName, bool ThinProvisioned, bool AssumeClean);
+        PoolPlan Plan, IReadOnlyList<Disk> SelectedDisks, string PoolName, bool ThinProvisioned, bool AssumeClean,
+        int ChunkSizeKb);
 
     private static string ComputeId(
-        IReadOnlyList<Disk> disks, RedundancyLevel redundancy, string poolName, bool thinProvisioned, bool assumeClean)
+        IReadOnlyList<Disk> disks, RedundancyLevel redundancy, string poolName, bool thinProvisioned, bool assumeClean,
+        int chunkSizeKb)
     {
         var canonical = string.Join(
             ";",
             disks.OrderBy(d => d.Id, StringComparer.Ordinal).Select(d => $"{d.Id}:{d.SizeBytes}"));
         var hash = SHA256.HashData(
-            Encoding.UTF8.GetBytes($"{canonical};R={redundancy};P={poolName};T={thinProvisioned};A={assumeClean}"));
+            Encoding.UTF8.GetBytes($"{canonical};R={redundancy};P={poolName};T={thinProvisioned};A={assumeClean};C={chunkSizeKb}"));
         return Convert.ToHexStringLower(hash)[..16];
     }
 }

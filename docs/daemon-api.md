@@ -34,7 +34,7 @@ already built over HTTP.
   ToDiskId` — the exact inverse of the naming `CommandPlanner` uses when
   building the array in the first place.
 - `POST /plan` → body: `{ diskIds: [...], redundancy: "none"|"dwr1"|"dwr2",
-  poolName?, thinProvisioned?, assumeClean? }` (optionally `{ existingPool: ... }` for
+  poolName?, thinProvisioned?, assumeClean?, chunkSizeKb? }` (optionally `{ existingPool: ... }` for
   the incremental path) → `thinProvisioned` (default `false`) makes the
   eventual `Build`/`BuildTeardown` create a thin pool (with headroom, see
   `CommandPlanner.ThinPoolHeadroomPercent`) plus one thin `data` volume
@@ -43,8 +43,12 @@ already built over HTTP.
   each tier's `mdadm --create` pass `--assume-clean`, skipping the
   initial full-array resync/parity-build — safe here specifically
   because every disk was just verified blank, so there's no real data
-  whose parity could be silently wrong to begin with. `PlanCache` stores
-  both alongside the plan itself, keyed into the plan id, so
+  whose parity could be silently wrong to begin with. `chunkSizeKb`
+  (default `CommandPlanner.DefaultChunkSizeKb`, 64) sets each striped
+  (RAID5/RAID6) tier's `mdadm --create --chunk` size — must be one of
+  `CommandPlanner.ValidChunkSizesKb` (64/128/256/512), `400` otherwise;
+  ignored for Mirror tiers, which don't stripe. `PlanCache` stores all
+  three alongside the plan itself, keyed into the plan id, so
   `/plan/{id}/script` and `/plan/{id}/execute` build exactly the layout
   this request described.
   →
@@ -86,13 +90,18 @@ already built over HTTP.
   Validated end-to-end through the Cockpit UI.
 - `POST /pools/{poolName}/expand` → body `{ diskIds: [...],
   targetProtection?: "none"|"dwr1"|"dwr2", redundancy?: "none"|"dwr1"|"dwr2",
-  targetArrayDevice?: string, assumeClean?: boolean }`, disks to add to a pool found via
+  targetArrayDevice?: string, assumeClean?: boolean, chunkSizeKb?: number }`, disks to add to a pool found via
   `GET /pools`. `assumeClean` (default `false`) is passed straight through
   to `CommandPlanner.BuildIncremental` — same `--assume-clean` behavior as
   `POST /plan`'s field of the same name, but only affects any brand-new
   tier this expansion creates; growing an existing tier in place
   (`mdadm --grow`) always resyncs regardless, since mdadm has no
-  equivalent skip for that operation. Three tenets drive this endpoint's design (see
+  equivalent skip for that operation. `chunkSizeKb` (default 64, must be
+  one of `CommandPlanner.ValidChunkSizesKb`, `400` otherwise) is likewise
+  passed straight through — same behavior as `POST /plan`'s field of the
+  same name, only affecting any brand-new striped tier this expansion
+  creates; an existing tier's chunk size is never changed in place.
+  Three tenets drive this endpoint's design (see
   algorithm.md's "Expand tenets" for the full rationale):
   1. A fresh build (`POST /plan`) always picks the max-capacity layout
      for the requested redundancy — nothing new here, just the baseline.

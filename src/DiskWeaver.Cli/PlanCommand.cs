@@ -5,11 +5,14 @@ using DiskWeaver.Planner;
 namespace DiskWeaver.Cli;
 
 /// <summary>
-/// Implements `diskweaver plan --redundancy ... --disks ... [--lsblk-json <file> | --lsblk] [--script <file>] [--assume-clean]`.
+/// Implements `diskweaver plan --redundancy ... --disks ... [--lsblk-json <file> | --lsblk] [--script <file>] [--assume-clean] [--chunk-size <64|128|256|512>]`.
 /// <c>--assume-clean</c> (only affects <c>--script</c>) runs each tier's <c>mdadm --create</c> with
 /// <c>--assume-clean</c>, skipping the initial full-array resync/parity-build -- see
 /// <see cref="Executor.CommandPlanner.Build"/>'s <c>assumeClean</c> parameter for why that's safe
 /// on the always-blank disks this command works with.
+/// <c>--chunk-size</c> (only affects <c>--script</c>, KiB, default
+/// <see cref="Executor.CommandPlanner.DefaultChunkSizeKb"/>) sets the striped (RAID5/RAID6) tier
+/// chunk size -- see <see cref="Executor.CommandPlanner.Build"/>'s <c>chunkSizeKb</c> parameter.
 /// <c>--disks</c> is always required and always means "the exact disks to plan for" -- there is
 /// no mode where omitting it falls back to "use everything found". Without an inventory source
 /// it's a list of raw sizes (--disks 2TB,2TB,4TB); with --lsblk-json/--lsblk it's the disk
@@ -26,6 +29,8 @@ public static class PlanCommand
         string? scriptOutputPath = null;
         string? teardownScriptOutputPath = null;
         var assumeClean = false;
+        var chunkSizeKb = CommandPlanner.DefaultChunkSizeKb;
+        string? chunkSizeArg = null;
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -52,6 +57,20 @@ public static class PlanCommand
                 case "--assume-clean":
                     assumeClean = true;
                     break;
+                case "--chunk-size" when i + 1 < args.Length:
+                    chunkSizeArg = args[++i];
+                    break;
+            }
+        }
+
+        if (chunkSizeArg is not null)
+        {
+            if (!int.TryParse(chunkSizeArg, out chunkSizeKb) || !CommandPlanner.ValidChunkSizesKb.Contains(chunkSizeKb))
+            {
+                Console.Error.WriteLine(
+                    $"Unsupported --chunk-size '{chunkSizeArg}' -- use one of: "
+                    + $"{string.Join(", ", CommandPlanner.ValidChunkSizesKb)}.");
+                return 1;
             }
         }
 
@@ -61,7 +80,7 @@ public static class PlanCommand
         {
             Console.Error.WriteLine(
                 "Usage: diskweaver plan --redundancy <none|dwr1|dwr2> --disks <size,size,... | name,name,...> "
-                + "[--lsblk-json <file> | --lsblk] [--script <file>] [--assume-clean]");
+                + "[--lsblk-json <file> | --lsblk] [--script <file>] [--assume-clean] [--chunk-size <64|128|256|512>]");
             Console.Error.WriteLine("Example: diskweaver plan --redundancy dwr1 --disks 2TB,2TB,4TB,4TB,4TB");
             Console.Error.WriteLine(
                 "Example: diskweaver plan --redundancy dwr1 --lsblk-json inventory.json --disks loop0,loop1,loop2,loop3");
@@ -134,7 +153,7 @@ public static class PlanCommand
 
         if (scriptOutputPath is not null)
         {
-            var executionPlan = CommandPlanner.Build(plan, assumeClean: assumeClean);
+            var executionPlan = CommandPlanner.Build(plan, assumeClean: assumeClean, chunkSizeKb: chunkSizeKb);
             var script = ShellScriptEmitter.Render(executionPlan);
             File.WriteAllText(scriptOutputPath, script);
             Console.WriteLine();

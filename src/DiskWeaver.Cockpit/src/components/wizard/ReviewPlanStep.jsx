@@ -11,7 +11,7 @@ import { apiRequest } from "../../api.js";
 // comment in CreateExpandWizard for the same reasoning).
 export function ReviewPlanStep({
     plan, achievedCapacityBytes, hypotheticalRebuildCapacityBytes, expansionPoolName, poolName, planId,
-    thinProvisioned, assumeClean, onVisualize,
+    thinProvisioned, assumeClean, chunkSizeKb, onVisualize,
 }) {
     const [scriptText, setScriptText] = useState(null);
     const [scriptError, setScriptError] = useState(null);
@@ -65,6 +65,9 @@ export function ReviewPlanStep({
                 )}
                 {assumeClean && (
                     <p>Skipping initial resync: each tier's array is created with --assume-clean.</p>
+                )}
+                {chunkSizeKb !== undefined && plan.tiers.some(t => t.raidLevel !== 0) && (
+                    <p>Striped (RAID5/RAID6) tiers use a {chunkSizeKb} KiB chunk size.</p>
                 )}
                 {rebuildIsBetter && (
                     <p>

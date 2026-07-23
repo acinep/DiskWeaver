@@ -363,6 +363,42 @@ public class DaemonEndpointsTests : IClassFixture<DaemonWebApplicationFactory>
     }
 
     [Fact]
+    public async Task GetPlanScript_ChunkSizeKb_AppliesToStripedTier()
+    {
+        // fake-0/1/2 (2TB, 2TB, 4TB) at dwr1 forms a RAID5 (striped) tier, unlike a 2-disk mirror.
+        var planResponse = await _client.PostAsJsonAsync(
+            "/plan", new PlanRequest(["fake-0", "fake-1", "fake-2"], "dwr1", "test-new-pool", ChunkSizeKb: 256));
+        var plan = await planResponse.Content.ReadFromJsonAsync<PlanResponse>();
+
+        var script = await _client.GetStringAsync($"/plan/{plan!.Id}/script");
+
+        Assert.Contains("--chunk=256", script);
+    }
+
+    [Fact]
+    public async Task PostPlan_InvalidChunkSizeKb_ReturnsBadRequest()
+    {
+        var response = await _client.PostAsJsonAsync(
+            "/plan", new PlanRequest(["fake-0", "fake-1"], "dwr1", "test-new-pool", ChunkSizeKb: 100));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task SameDisksAndPoolName_DifferentChunkSizeKb_ProduceDifferentPlanIds()
+    {
+        var chunk64 = await _client.PostAsJsonAsync(
+            "/plan", new PlanRequest(["fake-0", "fake-1"], "dwr1", "test-new-pool", ChunkSizeKb: 64));
+        var chunk512 = await _client.PostAsJsonAsync(
+            "/plan", new PlanRequest(["fake-0", "fake-1"], "dwr1", "test-new-pool", ChunkSizeKb: 512));
+
+        var chunk64Body = await chunk64.Content.ReadFromJsonAsync<PlanResponse>();
+        var chunk512Body = await chunk512.Content.ReadFromJsonAsync<PlanResponse>();
+
+        Assert.NotEqual(chunk64Body!.Id, chunk512Body!.Id);
+    }
+
+    [Fact]
     public async Task GetPlanScript_Teardown_ReturnsTeardownScript()
     {
         var planResponse = await _client.PostAsJsonAsync(
